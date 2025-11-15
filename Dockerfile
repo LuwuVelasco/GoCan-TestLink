@@ -2,14 +2,14 @@ FROM php:7.4-apache
 
 # Instalar extensiones necesarias para TestLink
 RUN apt-get update && apt-get install -y \
-    libpq-dev \
     libzip-dev \
-    postgresql-client \
+    default-mysql-client \
     git \
     && docker-php-ext-install \
     pdo \
-    pdo_pgsql \
+    pdo_mysql \
     zip \
+    mysqli \
     && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 

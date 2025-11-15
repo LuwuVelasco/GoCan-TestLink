@@ -7,8 +7,6 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /index.php
     envVars:
-      - key: DB_TYPE
-        value: pgsql
       - key: DB_HOST
         fromDatabase:
           name: testlink-db
@@ -29,10 +27,6 @@ services:
         fromDatabase:
           name: testlink-db
           property: database
-      - key: INTERNAL_DB_DSURL
-        fromDatabase:
-          name: testlink-db
-          property: internalDatabaseUrl
 
 databases:
   - name: testlink-db
@@ -40,4 +34,5 @@ databases:
     user: testlink_user
     region: oregon
     plan: free
-    version: 15
+    dbengine: mysql
+    version: "8.0"
