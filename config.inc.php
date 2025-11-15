@@ -144,6 +144,9 @@ $tlCfg->diffEngine = new stdClass();
 /** @uses database access definition (generated automatically by TL installer) */ 
 @include_once('config_db.inc.php');
 
+// PostgreSQL compatibility layer
+@include_once('pgsql_compat.php');
+
 if( !defined('DB_TABLE_PREFIX') )
 {
     define('DB_TABLE_PREFIX','' );

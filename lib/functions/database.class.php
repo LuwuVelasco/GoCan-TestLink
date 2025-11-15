@@ -96,7 +96,22 @@ class database
 	function database($db_type)
 	{
 		$fetch_mode = ADODB_FETCH_ASSOC;
-		$this->db = NewADOConnection($db_type);
+		
+		// Mapeo de tipos de BD para ADODB
+		$adodb_type_map = array(
+			'pgsql' => 'postgres9',  // PostgreSQL 9.x o superior
+			'postgres' => 'postgres9',
+			'postgres7' => 'postgres7',
+			'postgres8' => 'postgres8',
+			'mysql' => 'mysql',
+			'mssql' => 'mssql',
+			'oracle' => 'oci805',
+		);
+		
+		// Usar el tipo mapeado si existe, si no usar el tipo original
+		$adodb_type = isset($adodb_type_map[$db_type]) ? $adodb_type_map[$db_type] : $db_type;
+		
+		$this->db = NewADOConnection($adodb_type);
 		
 		// added to reduce memory usage (before this setting we used ADODB_FETCH_BOTH)
 		if($db_type == 'mssql')
