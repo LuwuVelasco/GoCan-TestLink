@@ -98,12 +98,13 @@ class database
 		$fetch_mode = ADODB_FETCH_ASSOC;
 		
 		// Mapeo de tipos de BD para ADODB
+		// ADODB necesita nombres exactos de archivos: adodb-{tipo}.inc.php
 		$adodb_type_map = array(
-			'pgsql' => 'postgres9',  // PostgreSQL 9.x o superior
-			'postgres' => 'postgres9',
+			'pgsql' => 'pdo_pgsql',      // Usa PDO para PostgreSQL
+			'postgres' => 'pdo_pgsql',
 			'postgres7' => 'postgres7',
 			'postgres8' => 'postgres8',
-			'mysql' => 'mysql',
+			'mysql' => 'mysqli',         // Usa mysqli en lugar de mysql (mysql_* está deprecated)
 			'mssql' => 'mssql',
 			'oracle' => 'oci805',
 		);
