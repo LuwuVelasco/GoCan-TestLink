@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: testlink-app
+    runtime: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /index.php
+    envVars:
+      - key: DB_TYPE
+        value: pgsql
+      - key: DB_HOST
+        fromDatabase:
+          name: testlink-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: testlink-db
+          property: port
+      - key: DB_USER
+        fromDatabase:
+          name: testlink-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: testlink-db
+          property: password
+      - key: DB_NAME
+        fromDatabase:
+          name: testlink-db
+          property: database
+      - key: INTERNAL_DB_DSURL
+        fromDatabase:
+          name: testlink-db
+          property: internalDatabaseUrl
+
+databases:
+  - name: testlink-db
+    databaseName: testlink
+    user: testlink_user
+    region: oregon
+    plan: free
+    version: 15

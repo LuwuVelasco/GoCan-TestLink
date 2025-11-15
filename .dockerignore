@@ -1,0 +1,10 @@
+.git
+.gitignore
+.github
+README.md
+CHANGELOG
+LICENSE
+docs
+install
+.DS_Store
+*.log
