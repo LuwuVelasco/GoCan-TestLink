@@ -4,15 +4,12 @@ FROM php:7.4-apache
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     libzip-dev \
-    mysql-client \
     postgresql-client \
     git \
     && docker-php-ext-install \
     pdo \
-    pdo_mysql \
     pdo_pgsql \
     zip \
-    mysqli \
     && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
