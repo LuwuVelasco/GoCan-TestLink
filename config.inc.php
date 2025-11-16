@@ -234,6 +234,7 @@ $tlCfg->sessionInactivityTimeout = 9900;
 
 /** Error reporting - do we want php errors to show up for users */
 error_reporting(E_ALL);
+ini_set('display_errors', '1');
 
 /** @var string Default level of logging (NONE, ERROR, INFO, DEBUG, EXTENDED) */
 $tlCfg->log_level = 'ERROR';

@@ -6,8 +6,7 @@ RUN apt-get update && apt-get install -y \
     libzip-dev \
     postgresql-client \
     git \
-    && docker-php-ext-install \
-    pdo \
+    && docker-php-ext-install -j$(nproc) \
     pdo_pgsql \
     zip \
     && a2enmod rewrite \
