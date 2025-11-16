@@ -11,7 +11,11 @@ RUN apt-get update && apt-get install -y \
     pdo_pgsql \
     zip \
     && a2enmod rewrite \
+    && a2enmod headers \
     && rm -rf /var/lib/apt/lists/*
+
+# Configurar Apache para permitir .htaccess
+RUN sed -i 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf
 
 # Copiar archivos de TestLink al DocumentRoot
 COPY . /var/www/html/
