@@ -1,4 +1,9 @@
 <?php
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
+
+echo "LOGIN.PHP ARRANCA<br>";
+flush();
 /**
  * TestLink Open Source Project - http://testlink.sourceforge.net/ 
  * This script is distributed under the GNU General Public License 2 or later. 
