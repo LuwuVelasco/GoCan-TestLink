@@ -1,16 +1,13 @@
 <?php
-/**
- * TestLink - DB config para Render (PostgreSQL)
- */
+// Config de base de datos para TestLink 1.9.20 con PostgreSQL en Render
 
 define('DB_TYPE', 'pgsql');
 
-define('DB_HOST',   getenv('DB_HOST')   ?: 'localhost');
-define('DB_NAME',   getenv('DB_NAME')   ?: 'testlink');
-define('DB_USER',   getenv('DB_USER')   ?: 'testlink_user');
-define('DB_PASSWD', getenv('DB_PASSWORD') ?: '');
-define('DB_PORT',   getenv('DB_PORT')   ?: '5432');
+define('DB_USER', getenv('DB_USER') ?: 'testlink_user');
+define('DB_PASS', getenv('DB_PASSWORD') ?: 'jGPyBHdk19jm9wcAFZ60vMbVPnCnbPU7');
+define('DB_HOST', getenv('DB_HOST') ?: 'dpg-d4cmlj2li9vc73c3bok0-a');
+define('DB_NAME', getenv('DB_NAME') ?: 'testlink_lqf7');
 
-// Prefijo de tablas (puedes cambiarlo si quieres separar varias instancias)
-define('DB_TABLE_PREFIX', 'tl_');
+// Prefijo de tablas (lo normal es dejarlo vacío)
+define('DB_TABLE_PREFIX', '');
 ?>
