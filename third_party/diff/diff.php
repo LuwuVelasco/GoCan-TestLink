@@ -1,4 +1,12 @@
 <?php
+/** TestLink Open Source Project - http://testlink.sourceforge.net/
+ *
+ * @filesource diff.php
+ * 
+ * @internal revision
+ * @since 1.9.14
+*/
+
 /*
 	Ross Scrivener http://scrivna.com
 	PHP file diff implementation
@@ -20,7 +28,8 @@ class diff {
 	function doDiff($old, $new){
 		if (!is_array($old)) $old = file($old);
 		if (!is_array($new)) $new = file($new);
-	
+
+		$maxlen = 0;
 		foreach($old as $oindex => $ovalue){
 			$nkeys = array_keys($new, $ovalue);
 			foreach($nkeys as $nindex){
@@ -88,7 +97,7 @@ class diff {
 	function inline($left, $leftversion, $right, $rightversion, $linepadding=null){
 		$this->linepadding = $linepadding;
 		$ret = '<pre><table width="100%" border="0" cellspacing="0" cellpadding="0" class="code">';
-		$ret.= '<tr><td>' . $leftversion . '</td><td>' . $rightversion . '</td><td></td><rd></tr>';
+		$ret.= '<tr><td>' . $leftversion . '</td><td>' . $rightversion . '</td><td></td><td></tr>';
 		$count_old = 1;
 		$count_new = 1;
 		

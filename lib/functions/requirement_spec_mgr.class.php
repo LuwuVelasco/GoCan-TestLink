@@ -3,54 +3,12 @@
  * TestLink Open Source Project - http://testlink.sourceforge.net/
  * This script is distributed under the GNU General Public License 2 or later.
  *
- * Filename $RCSfile: requirement_spec_mgr.class.php,v $
- *
- * @version $Revision: 1.87.2.1 $
- * @modified $Date: 2010/11/09 11:11:09 $ by $Author: asimon83 $
- * @author Francisco Mancardi
+ * @filesource  requirement_spec_mgr.class.php
+ * @author      Francisco Mancardi
  *
  * Manager for requirement specification (requirement container)
  *
- * @internal revision:  
- *  20101109 - asimon - BUGID 3989: now it is configurable if custom fields without values are shown
- *	20100908 - franciscom - BUGID 3762 Import Req Spec - custom fields values are ignored
- *							createFromXML()
- * 
- *	20100320 - franciscom - xmlToMapReqSpec() added attributes: type,total_req 
- *	20100311 - franciscom - fixed bug due to missed isset() control
- *  20100307 - amitkhullar - small bug fix for Requirements based report.
- *  20100209 - franciscom - changes in delete_subtree_objects() call due to BUGID 3147 
- * 	20091228 - franciscom - get_requirements() - refactored to manage req versions
- *                          get_coverage() - refactored to manage req versions
- * 	20091225 - franciscom - new method - generateDocID()
- * 	20091223 - franciscom - new method - copy_to() + changes to check_main_data()
- *  20091209 - asimon     - contrib for testcase creation, BUGID 2996
- *	20091202 - franciscom - create(), update() 
- *                          added contribution by asimon83/mx-julian that creates
- *                          links inside scope field.
- *
- *  20091122 - franciscom - new methods getByDocID(), check_main_data()
- *	20091119 - franciscom - added doc_id management
- *
- *  20090525 - franciscom - avoid getDisplayName() crash due to deleted user 
- *  20090514 - franciscom - BUGID 2491
- *  20090427 - amitkhullar- BUGID : 2439 Modified query to handle lower case status codes.
- *  20090322 - franciscom - create() - added node_order.
- *                          check_title() - improvements now manages test project id and parent id.
- *                          get_by_title() - improvements now manages test project id and parent id.
- *
- *  20090322 - franciscom - xmlToMapReqSpec()
- *  20090321 - franciscom - added customFieldValuesAsXML() to improve exportReqSpecToXML()
- *
- *  20090315 - franciscom - added delete_deep();
- *
- *  20090222 - franciscom - added getReqTree(), get_by_id() added node_order in result
- *                          exportReqSpecToXML() (will be available on TL 1.9)
- *
- *  20090111 - franciscom - BUGID 1967 - html_table_of_custom_field_inputs()
- *                                       get_linked_cfields()
- *
-*/
+ */
 require_once( dirname(__FILE__) . '/attachments.inc.php' );
 require_once( dirname(__FILE__) . '/requirements.inc.php' );
 
@@ -69,6 +27,10 @@ class requirement_spec_mgr extends tlObjectWithAttachments
   var $node_types_descr_id;
   var $node_types_id_descr;
   var $attachmentTableName;
+  var $field_size;
+  var $req_mgr;
+  var $relationsCfg;
+  var $requirement_child_ids = array();
 
   /*
     contructor
@@ -78,20 +40,26 @@ class requirement_spec_mgr extends tlObjectWithAttachments
     returns: instance of requirement_spec_mgr
 
   */
-	function __construct(&$db)
-	{
-		$this->db = &$db;
-		$this->cfield_mgr = new cfield_mgr($this->db);
-		$this->tree_mgr =  new tree($this->db);
+  function __construct(&$db)
+  {
+    $this->db = &$db;
+    $this->cfield_mgr = new cfield_mgr($this->db);
+    $this->tree_mgr =  new tree($this->db);
+    $this->req_mgr = new requirement_mgr($this->db);
 
-		$this->node_types_descr_id = $this->tree_mgr->get_available_node_types();
-		$this->node_types_id_descr = array_flip($this->node_types_descr_id);
-		$this->my_node_type = $this->node_types_descr_id['requirement_spec'];
+    $this->node_types_descr_id = $this->tree_mgr->get_available_node_types();
+    $this->node_types_id_descr = array_flip($this->node_types_descr_id);
+    $this->my_node_type = $this->node_types_descr_id['requirement_spec'];
 
-        $this->attachmentTableName = 'req_specs';
-		tlObjectWithAttachments::__construct($this->db,$this->attachmentTableName);
-	    $this->object_table=$this->tables['req_specs'];
-	}
+    $this->attachmentTableName = 'req_specs';
+    tlObjectWithAttachments::__construct($this->db,$this->attachmentTableName);
+    $this->object_table=$this->tables['req_specs'];
+
+    $this->field_size = config_get('field_size');
+
+    $this->relationsCfg = new stdClass();
+    $this->relationsCfg->interProjectLinking = config_get('req_cfg')->relations->interproject_linking;
+  }
 
 	/*
 	  function: get_export_file_types
@@ -106,8 +74,8 @@ class requirement_spec_mgr extends tlObjectWithAttachments
 	*/
 	function get_export_file_types()
 	{
-    	return $this->export_file_types;
-  	}
+      return $this->export_file_types;
+    }
 
 	/*
 	  function: get_impor_file_types
@@ -122,8 +90,8 @@ class requirement_spec_mgr extends tlObjectWithAttachments
 	*/
 	function get_import_file_types()
 	{
-     	return $this->import_file_types;
-  	}
+    return $this->import_file_types;
+  }
 
 
   /*
@@ -146,207 +114,227 @@ class requirement_spec_mgr extends tlObjectWithAttachments
              msg -> some simple message, useful when status_ok ==0
              id -> id of requirement specification
 
-    rev:
-    	20091202 - franciscom -  added contribution by asimon83/mx-julian 
-    	20080830 - franciscom -  added new argument parent_id
-        20080318 - franciscom - removed code to get last inserted id
-
   */
-function create($tproject_id,$parent_id,$doc_id,$title, $scope,$countReq,$user_id, 
-				$type = TL_REQ_SPEC_TYPE_FEATURE,$node_order=null, $options=null)
-{
-	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-    $result=array('status_ok' => 0, 'msg' => 'ko', 'id' => 0);
+  function create($tproject_id,$parent_id,$doc_id,$title, $scope,
+                  $countReq,$user_id, $type = TL_REQ_SPEC_TYPE_FEATURE,
+                  $node_order=null, $options=null)
+  {
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $result=array('status_ok' => 0, 'msg' => 'ko', 'id' => -1, 'revision_id' => -1);
     $title=trim($title);
     $chk=$this->check_main_data($title,$doc_id,$tproject_id,$parent_id);
     $result['msg']=$chk['msg'];
     
-	$my['options'] = array( 'actionOnDuplicate' => "block");
-	$my['options'] = array_merge($my['options'], (array)$options);
+  	$my['options'] = array( 'actionOnDuplicate' => "block");
+  	$my['options'] = array_merge($my['options'], (array)$options);
 
     if ($chk['status_ok'])
     {
-    	/* contribution by asimon83/mx-julian */
-		if( config_get('internal_links')->enable ) 
-		{
-			$scope = req_link_replace($this->db, $scope, $tproject_id);
-		}
-		/* end contribution by asimon83/mx-julian */
-
-    	
-        $req_spec_id = $this->tree_mgr->new_node($parent_id,$this->my_node_type,$title,$node_order);
-        $sql = "/* $debugMsg */ INSERT INTO {$this->object_table} " .
-			   " (id, testproject_id, doc_id, scope, type, total_req, author_id, creation_ts) " .
-               " VALUES (" . $req_spec_id . "," . $tproject_id . ",'" . 
-               $this->db->prepare_string($doc_id) . "','" .
-               $this->db->prepare_string($scope) .  "','" . $this->db->prepare_string($type) . "','" .
-               $this->db->prepare_string($countReq) . "'," . $user_id . ", " . $this->db->db_now() . ")";
-            
-            
-        if (!$this->db->exec_query($sql))
-        {
-        	$result['msg']=lang_get('error_creating_req_spec');
-        }
-        else
-        {
-		    $result['id']=$req_spec_id;
-            $result['status_ok'] = 1;
-		    $result['msg'] = 'ok';
-		}
-	}
-    return $result;
-}
-
-
-/*
-  function: get_by_id
-
-
-  args : id: requirement spec id
-
-  returns: null if query fails
-           map with requirement spec info
-
-*/
-function get_by_id($id)
-{
-	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-    $sql = "/* $debugMsg */ " . 
-    	   " SELECT '' AS author, '' AS modifier, NH.node_order, " .
-    	   " RSPEC.id,testproject_id,RSPEC.scope,RSPEC.total_req,RSPEC.type," .
-           " RSPEC.author_id,RSPEC.creation_ts,RSPEC.modifier_id," .
-           " RSPEC.modification_ts,NH.name AS title,RSPEC.doc_id " .
-    	   " FROM {$this->object_table} RSPEC,  {$this->tables['nodes_hierarchy']} NH" .
-    	   " WHERE RSPEC.id = NH.id " . 
-    	   " AND RSPEC.id = {$id}";
-       
-	$recordset = $this->db->get_recordset($sql);
-    $rs = null;
-    if(!is_null($recordset))
-    {
-        // Decode users
-        $rs = $recordset[0];
-        if(trim($rs['author_id']) != "")
-        {
-            $user = tlUser::getByID($this->db,$rs['author_id']);
-            // need to manage deleted users
-            if($user) 
-            {
-                $rs['author'] = $user->getDisplayName();
-            }
-            else
-            {
-                $rs['author'] = lang_get('undefined');
-            }    
-        }
+  		if( config_get('internal_links')->enable ) 
+  		{
+  			$scope = req_link_replace($this->db, $scope, $tproject_id);
+  		}
+      $req_spec_id = $this->tree_mgr->new_node($parent_id,$this->my_node_type,$title,$node_order);
       
-        if(trim($rs['modifier_id']) != "")
-        {
-            $user = tlUser::getByID($this->db,$rs['modifier_id']);
-            // need to manage deleted users
-            if($user) 
-            {
-                $rs['modifier'] = $user->getDisplayName();
-            }
-            else
-            {
-                $rs['modifier'] = lang_get('undefined');
-            }    
-        }
-    }  	
-    return $rs;
-}
+      $sql = "/* $debugMsg */ INSERT INTO {$this->object_table} " .
+			       " (id, testproject_id, doc_id) " .
+             " VALUES (" . $req_spec_id . "," . $tproject_id . ",'" . $this->db->prepare_string($doc_id) . "')";
+
+      if (!$this->db->exec_query($sql))
+      {
+        $result['msg']=lang_get('error_creating_req_spec');
+      }
+      else
+      {
+        $revItem = array('revision' => 1, 'doc_id' => $doc_id, 'name' => $title,
+                         'scope' => $scope, 'type' => $type, 'status' => 1,
+							           'total_req' => $countReq,'author_id' => $user_id,
+							           'log_message' => lang_get('reqspec_created_automatic_log'));
+			
+  			$op = $this->create_revision($req_spec_id,$revItem);
+  			$result['status_ok'] = $op['status_ok'];
+  			$result['msg'] = $op['status_ok'] ? $result['msg'] : $op['msg'];
+  			$result['revision_id'] = $op['status_ok'] ? $op['id'] : -1;
+  			$result['id'] = $op['status_ok'] ? $req_spec_id : -1;
+  		}
+  	}
+    return $result;
+  }
+
+  /*
+    function: get_by_id
+
+
+    args : id: requirement spec id
+  		 options:
+  		 		 key: output
+  		 		 values: 'full','credentials'
+  		 		 	
+    returns: null if query fails
+             map with requirement spec info
+  */
+  function get_by_id($id,$options=null) {
+  	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+   
+         
+  	$my['options'] = array('output' => 'full');       
+  	$my['options'] = array_merge($my['options'], (array)$options);
+         
+         
+      // First Step get ID of LATEST revision   
+  	$info = $this->get_last_child_info($id,array('output' => 'credentials') );       
+      $childID = $info['id'];
+         
+         
+      $sql =	"/* $debugMsg */ SELECT RSPEC.id,RSPEC.doc_id, RSPEC.testproject_id, " .
+  			" RSPEC_REV.id AS revision_id, RSPEC_REV.revision ";
+
+      switch($my['options']['output'])
+      {
+      	case 'credentials':
+      		$doUserDecode = false;
+      	break;
+  		
+  		case 'full':
+  		default:
+  				$sql .= " , '' AS author, '' AS modifier, NH_RSPEC.node_order, " .
+  						" RSPEC_REV.scope,RSPEC_REV.total_req,RSPEC_REV.type," .
+  						" RSPEC_REV.author_id,RSPEC_REV.creation_ts,RSPEC_REV.modifier_id," .
+  						" RSPEC_REV.modification_ts,NH_RSPEC.name AS title ";
+      			$doUserDecode = true;
+      	break;
+      }
+      $sql .= " FROM {$this->object_table} RSPEC " .
+  			" JOIN {$this->tables['req_specs_revisions']} RSPEC_REV " .
+  			" ON RSPEC_REV.parent_id = RSPEC.id " .
+  			" JOIN {$this->tables['nodes_hierarchy']} NH_RSPEC " .
+  			" ON RSPEC.id = NH_RSPEC.id " .
+  			" WHERE RSPEC.id = NH_RSPEC.id " .
+  			" AND RSPEC_REV.id = {$childID} " .
+  			" AND RSPEC.id = {$id} ";
+         
+         
+      // echo $sql;   
+  	$recordset = $this->db->get_recordset($sql);
+      $rs = null;
+      if(!is_null($recordset))
+      {
+          // Decode users
+          $rs = $recordset[0];
+          
+          if($doUserDecode)
+          {
+          	$lbl_undef = lang_get('undefined');
+  	        if(trim($rs['author_id']) != "")
+  	        {
+  	            $user = tlUser::getByID($this->db,$rs['author_id']);
+  	            // need to manage deleted users
+  	            $rs['author'] = $lbl_undef;
+  	            if($user) 
+  	            {
+  	                $rs['author'] = $user->getDisplayName();
+  	            }
+  	        }
+  	      
+  	        if(trim($rs['modifier_id']) != "")
+  	        {
+  	            $user = tlUser::getByID($this->db,$rs['modifier_id']);
+  	            // need to manage deleted users
+  	            $rs['modifier'] = $lbl_undef;
+  	            if($user) 
+  	            {
+  	                $rs['modifier'] = $user->getDisplayName();
+  	            }
+  	        }
+          }
+      }  	
+      return $rs;
+  }
 
 
 
-/**
- * get analyse based on requirements and test specification
- *
- * @param integer $id: Req Spec id
- * @return array Coverage in three internal arrays: covered, uncovered, nottestable REQ
- * @author martin havlat
- */
-function get_coverage($id)
-{
-	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-    $req_mgr = new requirement_mgr($this->db);
-    // $statusFilter = " AND status IN('" . strtoupper(VALID_REQ)."','".VALID_REQ."') ";
-    // $order_by = " ORDER BY req_doc_id,title";
-	$output = array( 'covered' => array(), 'uncovered' => array(),'nottestable' => array());
+  /**
+   * get analyse based on requirements and test specification
+   *
+   * @param integer $id: Req Spec id
+   * @return array Coverage in three internal arrays: covered, uncovered, nottestable REQ
+   * @author martin havlat
+   */
+  function get_coverage($id)
+  {
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $output = array( 'covered' => array(), 'uncovered' => array(),'nottestable' => array());
 
     // function get_requirements($id, $range = 'all', $testcase_id = null, $options=null, $filters = null)
     $getOptions = array('order_by' => " ORDER BY req_doc_id,title");
-	$getFilters = array('status' => VALID_REQ);
-	$validReq = $this->get_requirements($id,'all',null,$getOptions,$getFilters);
-	
-	// get not-testable requirements
-	$getFilters = array('status' => NON_TESTABLE_REQ);
+    $getFilters = array('status' => VALID_REQ);
+    $validReq = $this->get_requirements($id,'all',null,$getOptions,$getFilters);
+    
+    // get not-testable requirements
+    $getFilters = array('status' => NON_TESTABLE_REQ);
     $output['nottestable'] = $this->get_requirements($id,'all',null,$getOptions,$getFilters);   
-      
-       
-	// get coverage
-	if (sizeof($validReq))
-	{
-		foreach ($validReq as $req)
-		{
-			// collect TC for REQ
-			$arrCoverage = $req_mgr->get_coverage($req['id']);
 
-			if (count($arrCoverage) > 0) 
-			{
-				// add information about coverage
-				$req['coverage'] = $arrCoverage;
-				$output['covered'][] = $req;
-			} 
-			else 
-			{
-				$output['uncovered'][] = $req;
-			}
-		}
-	}
-	return $output;
-}
+    // get coverage
+    if (sizeof($validReq))
+    {
+      foreach ($validReq as $req)
+      {
+        // collect TC for REQ
+        $arrCoverage = $this->req_mgr->get_coverage($req['id']);
+        
+        if (count($arrCoverage) > 0) 
+        {
+          // add information about coverage
+          $req['coverage'] = $arrCoverage;
+          $output['covered'][] = $req;
+        } 
+        else 
+        {
+          $output['uncovered'][] = $req;
+        }
+      }
+    }
+    return $output;
+  }
 
 
-/**
- * get requirement coverage metrics
- *
- * @param integer $srs_id
- * @return array results
- * @author havlatm
- */
-function get_metrics($id)
-{
-	$output = array('notTestable' => 0, 'total' => 0, 'covered' => 0, 'uncovered' => 0);
-	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-	$getFilters = array('status' => NON_TESTABLE_REQ);
+  /**
+   * get requirement coverage metrics
+   *
+   * @param integer $srs_id
+   * @return array results
+   * @author havlatm
+   */
+  function get_metrics($id)
+  {
+    $output = array('notTestable' => 0, 'total' => 0, 'covered' => 0, 'uncovered' => 0);
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $getFilters = array('status' => NON_TESTABLE_REQ);
     $output['notTestable'] = $this->get_requirements_count($id,'all',null,$getFilters);
 
-	$sql = "/* $debugMsg */ SELECT count(0) AS cnt FROM {$this->tables['requirements']} WHERE srs_id={$id}";
-	$output['total'] = $this->db->fetchFirstRowSingleColumn($sql,'cnt');
+    $sql = "/* $debugMsg */ SELECT count(0) AS cnt FROM {$this->tables['requirements']} WHERE srs_id={$id}";
+    $output['total'] = $this->db->fetchFirstRowSingleColumn($sql,'cnt');
 
-    //
-	$sql = "/* $debugMsg */ SELECT total_req FROM {$this->object_table} WHERE id={$id}";
-	$output['expectedTotal'] = $this->db->fetchFirstRowSingleColumn($sql,'total_req');
-	if ($output['expectedTotal'] == 0)
-	{
-		$output['expectedTotal'] = $output['total'];
-	}
-	
-	$sql = "/* $debugMsg */ SELECT DISTINCT REQ.id " .
-	       " FROM {$this->tables['requirements']} REQ " .
-	       " JOIN {$this->tables['req_coverage']} REQ_COV ON REQ.id=REQ_COV.req_id" .
-	       " WHERE REQ.srs_id={$id} " ;
-		   
-	$rs = $this->db->get_recordset($sql);
-	if (!is_null($rs))
-	{
-		$output['covered'] = count($rs);
-	}
-	$output['uncovered'] = $output['expectedTotal'] - $output['total'];
-
-	return $output;
-}
+    $sql = "/* $debugMsg */ SELECT total_req FROM {$this->object_table} WHERE id={$id}";
+    $output['expectedTotal'] = $this->db->fetchFirstRowSingleColumn($sql,'total_req');
+    if ($output['expectedTotal'] == 0)
+    {
+      $output['expectedTotal'] = $output['total'];
+    }
+    
+    $sql = "/* $debugMsg */ SELECT DISTINCT REQ.id " .
+           " FROM {$this->tables['requirements']} REQ " .
+           " JOIN {$this->tables['req_coverage']} REQ_COV ON REQ.id=REQ_COV.req_id" .
+           " WHERE REQ.srs_id={$id} " ;
+    $rs = $this->db->get_recordset($sql);
+    if (!is_null($rs))
+    {
+      $output['covered'] = count($rs);
+    }
+    $output['uncovered'] = $output['expectedTotal'] - $output['total'];
+    
+    return $output;
+  }
 
   /*
     function: get_all_in_testproject
@@ -371,104 +359,113 @@ function get_metrics($id)
              modifier_id
              modification_ts
   */
-function get_all_in_testproject($tproject_id,$order_by=" ORDER BY title")
-{
+  function get_all_in_testproject($tproject_id,$order_by=" ORDER BY title")
+  {
    	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-	$sql = "/* $debugMsg */ " . 
-	       " SELECT RSPEC.id,testproject_id,RSPEC.scope,RSPEC.total_req,RSPEC.type," .
+	  $sql = "/* $debugMsg */ " . 
+	         " SELECT RSPEC.id,testproject_id,RSPEC.scope,RSPEC.total_req,RSPEC.type," .
            " RSPEC.author_id,RSPEC.creation_ts,RSPEC.modifier_id," .
            " RSPEC.modification_ts,NH.name AS title,NH.node_order " .
-	       " FROM {$this->object_table} RSPEC, {$this->tables['nodes_hierarchy']} NH " .
-	       " WHERE NH.id=RSPEC.id" .
-	       " AND testproject_id={$tproject_id}";
+	         " FROM {$this->object_table} RSPEC, {$this->tables['nodes_hierarchy']} NH " .
+	         " WHERE NH.id=RSPEC.id" .
+	         " AND testproject_id={$tproject_id}";
 
     if (!is_null($order_by))
-	{
+	  {
 	    $sql .= $order_by;
     }
-	return $this->db->get_recordset($sql);
-}
+	  return $this->db->get_recordset($sql);
+  }
 
 
   /*
     function: update
 
-    args: id
-          title
-          scope
-          countReq
-          user_id,
-          [type]
+    args: item => map with following keys
+    	  id,doc_id,name,scope,countReq,user_id,type,node_order
 
     returns: map with following keys:
              status_ok -> 1/0
              msg -> some simple message, useful when status_ok ==0
+             revision_id -> useful when user request create new revision on update
 
   */
-  function update($id,$doc_id,$title, $scope, $countReq,$user_id,
-  				  $type = TL_REQ_SPEC_TYPE_FEATURE,$node_order = null)
+  function update($item,$options=null)
   {
-		$result['status_ok'] = 1;
-	  	$result['msg'] = 'ok';
+  	
+		$result = array('status_ok' => 1, 'msg' => 'ok', 'revision_id' => -1);
+		$my['options'] = array('skip_controls' => false, 'create_rev' => false, 'log_message' => '');
+		$my['options'] = array_merge($my['options'], (array)$options);
 
-		$title=trim_and_limit($title);
-    	$doc_id=trim_and_limit($doc_id);
+		$title=trim_and_limit($item['name']);
+   	$doc_id=trim_and_limit($item['doc_id']);
      
-    	$path=$this->tree_mgr->get_path($id); 
-    	$tproject_id = $path[0]['parent_id'];
-    	$last_idx=count($path)-1;
-    	$parent_id = $last_idx==0 ? null : $path[$last_idx]['parent_id'];
-    	$chk=$this->check_main_data($title,$doc_id,$path[0]['parent_id'],$parent_id,$id);
+   	$path=$this->tree_mgr->get_path($item['id']); 
+   	$tproject_id = $path[0]['parent_id'];
+   	$last_idx=count($path)-1;
+   	$parent_id = $last_idx==0 ? null : $path[$last_idx]['parent_id'];
+   	$chk=$this->check_main_data($title,$doc_id,$path[0]['parent_id'],$parent_id,$item['id']);
     
-    	if ($chk['status_ok'])
-    	{
-    		
-    		/* contribution by asimon83/mx-julian */
+    
+   	if ($chk['status_ok'] || $my['options']['skip_controls'])
+   	{
 			if( config_get('internal_links')->enable  ) 
 			{
-				$scope = req_link_replace($this->db, $scope, $tproject_id);
+				$item['scope'] = req_link_replace($this->db, $item['scope'], $tproject_id);
 			}
-			/* end contribution by asimon83/mx-julian */
-    	
-    		
-		    $db_now = $this->db->db_now();
-    	    $sql = " UPDATE {$this->object_table} " .
-    	           " SET scope='" . $this->db->prepare_string($scope) . "', " .
-			       " doc_id='" . $this->db->prepare_string($doc_id) . "', " .
-			       " type='" . $this->db->prepare_string($type) . "', " .
-			       " total_req ='" . $this->db->prepare_string($countReq) . "', " .
-			       " modifier_id={$user_id},modification_ts={$db_now} ";
-			$sql .= "WHERE id={$id}";
-    	    if (!$this->db->exec_query($sql))
+
+			$cnr = null;
+			if( $my['options']['create_rev'])
+			{	
+				$cnr = $this->create_new_revision($item['id'],$item+$my['options']);
+			}
+			else
 			{
-    	        $result['msg']=lang_get('error_updating_reqspec');
-  		        $result['status_ok'] = 0;
-		    }
-    	    if( $result['status_ok'] )
-    	    {
-  		        // need to update node on tree
-    	        $sql = " UPDATE {$this->tables['nodes_hierarchy']} " .
-  		    	       " SET name='" . $this->db->prepare_string($title) . "'";
-				if( !is_null($node_order) )
+				// missing piece, need to update all fields on last revision
+    		$cnr = $this->update_revision($item);
+			}
+    		
+	    $db_now = $this->db->db_now();
+ 	    $sql = " UPDATE {$this->object_table} " .
+ 	           " SET doc_id='" . $this->db->prepare_string($doc_id) . "' " .
+				     " WHERE id={$item['id']}";
+
+    	if (!$this->db->exec_query($sql))
+			{
+    	  $result['msg']=lang_get('error_updating_reqspec');
+  		  $result['status_ok'] = 0;
+		  }
+		    
+    	if( $result['status_ok'] )
+    	{
+  		  // need to update node on tree
+    	  $sql = " UPDATE {$this->tables['nodes_hierarchy']} " .
+  			       " SET name='" . $this->db->prepare_string($title) . "'";
+				if(isset($item['node_order']) &&  !is_null($item['node_order']) )
 				{
-					$sql .= ",node_order=" . intval($node_order);
+					$sql .= ",node_order=" . intval($item['node_order']);
 				}       
-  		    	$sql .= " WHERE id={$id}";
+  		 	$sql .= " WHERE id={$item['id']}";
     	    
-  		    	if (!$this->db->exec_query($sql))
-  		    	{
-  		    		$result['msg']=lang_get('error_updating_reqspec');
-    	    	    $result['status_ok'] = 0;
-  		        }
-		    }
-    	}    
+  		 	if (!$this->db->exec_query($sql))
+  		 	{
+  		 		$result['msg']=lang_get('error_updating_reqspec');
+    	    $result['status_ok'] = 0;
+  		  }
+		  }
+		    
+		  if( $result['status_ok'] && !is_null($cnr))
+    	{
+    	 	$result['revision_id'] = $cnr['id'];
+  		}
+    }    
 		else
 		{
-		    $result['status_ok']=$chk['status_ok'];
-		    $result['msg']=$chk['msg'];
+		  $result['status_ok']=$chk['status_ok'];
+		  $result['msg']=$chk['msg'];
 		}
-    	return $result;
-}
+    return $result;
+  }
 
 
 
@@ -491,58 +488,81 @@ function get_all_in_testproject($tproject_id,$order_by=" ORDER BY title")
              ok if everything is ok
 
   */
-function delete($id)
-{
-    $req_mgr = new requirement_mgr($this->db);
-	
-	// Delete Custom fields
-	$this->cfield_mgr->remove_all_design_values_from_node($id);
-	$result = $this->attachmentRepository->deleteAttachmentsFor($id,"req_specs");
+  function delete($unsafe_id)
+  {   
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $id = intval($unsafe_id);
 
-	// delete requirements (one type req spec children) with all related data
-	// coverage, attachments, custom fields, etc
-	$requirements_info = $this->get_requirements($id);
-	if(!is_null($requirements_info))
-	{
-		$items = null;
-		foreach($requirements_info as $req)
-		{
-			$items[] = $req["id"];
-		}
-		$req_mgr->delete($items);
-	}
-		  
-	// delete specification itself
-	$sql = "DELETE FROM {$this->object_table} WHERE id = {$id}";
-	$result = $this->db->exec_query($sql);
-	
-	$sql = "DELETE FROM {$this->tables['nodes_hierarchy']} WHERE id = {$id}";
-	$result = $this->db->exec_query($sql);
+    // ATTENTION: CF linked to REVISION 
+    $this->cfield_mgr->remove_all_design_values_from_node($id);
+    $result = $this->attachmentRepository->deleteAttachmentsFor($id,"req_specs");
+    
+    // delete requirements (one type req spec children) with all related data
+    // coverage, attachments, custom fields, etc
+    $requirements_info = $this->get_requirements($id);
+    if(!is_null($requirements_info))
+    {
+      $items = null;
+      foreach($requirements_info as $req)
+      {
+        $items[] = $req["id"];
+      }
+      $this->req_mgr->delete($items);
+    }
+    
+    // delete revisions
+    $sqlx = array();
+    $sqlx[] = "DELETE FROM {$this->tables['req_specs_revisions']} " .
+              "WHERE parent_id = {$id}";
 
-	if($result)
-	{
-		$result = 'ok';
-	}
-	else
-	{
-		$result = 'The DELETE SRS request fails.';
-	}
+    $sqlx[] = "DELETE FROM {$this->tables['nodes_hierarchy']} " . 
+              "WHERE parent_id = {$id} " .
+              "AND node_type_id=" . 
+              $this->node_types_descr_id['requirement_spec_revision'];
 
-	return $result;
-} // function end
+    foreach($sqlx as $sql)
+    {
+      $result = $this->db->exec_query("/* $debugMsg */" . $sql);
+    }
+
+    // delete specification itself
+    $sqlx = array();
+    $sqlx[] = "DELETE FROM {$this->object_table} WHERE id = {$id}";
+    $sqlx[] = "DELETE FROM {$this->tables['nodes_hierarchy']} " .
+              "WHERE id = {$id} AND node_type_id=" .
+              $this->node_types_descr_id['requirement_spec'];
+
+    foreach($sqlx as $sql)
+    {
+      $result = $this->db->exec_query("/* $debugMsg */" .$sql);
+    }
+
+    // This is a poor implementation
+    if($result)
+    {
+      $result = 'ok';
+    }
+    else
+    {
+      $result = 'The DELETE SRS request fails.';
+    }
+    
+    return $result;
+  }
 
 
-/**
- * delete_deep()
- * 
- * Delete Req Specification, removing all children (other Req. Spec and Requirements)
- */
-function delete_deep($id)
-{
-	// BUGID 3147 - Delete test project with requirements defined crashed with memory exhausted
-    $this->tree_mgr->delete_subtree_objects($id,$id,'',array('requirement' => 'exclude_my_children'));
+  /**
+   * delete_deep()
+   * 
+   * Delete Req Specification, removing all children (other Req. Spec and Requirements)
+   */
+  function delete_deep($id)
+  {
+    $exclusion =  ' AND NH.node_type_id <> ' . 
+                  intval($this->node_types_descr_id['requirement_spec_revision']);
+    $this->tree_mgr->delete_subtree_objects($id,$id,$exclusion,array('requirement' => 'exclude_my_children'));
     $this->delete($id);
-}
+  }
 
 
 
@@ -558,60 +578,59 @@ function delete_deep($id)
           [order_by]
 
     returns: array of rows
-
-    rev: 20080830 - franciscom - changed to get node_order from nodes hierarchy table
   */
-// function get_requirements($id, $range = 'all', $testcase_id = null,
-//                           $order_by=" ORDER BY NH_REQ.node_order,NH_REQ.name,REQ.req_doc_id")
-// 
-function get_requirements($id, $range = 'all', $testcase_id = null, $options=null, $filters = null)
-{
-	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-    $req_mgr = new requirement_mgr($this->db);
-	$my['options'] = array( 'order_by' => " ORDER BY NH_REQ.node_order,NH_REQ.name,REQ.req_doc_id", 
-	                        'output' => 'standard');
-	$my['options'] = array_merge($my['options'], (array)$options);
+  function get_requirements($id, $range = 'all', $testcase_id = null, $options=null, $filters = null) {
 
-    // null => do not filter
-	$my['filters'] = array('status' => null, 'type' => null);
-    $my['filters'] = array_merge($my['filters'], (array)$filters);
+  $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+  $my['options'] = array( 'order_by' => 
+                          " ORDER BY NH_REQ.node_order,NH_REQ.name,REQ.req_doc_id", 
+                          'output' => 'standard', 
+                          'outputLevel' => 'std', 'decodeUsers' => true);
+  
+  $my['options'] = array_merge($my['options'], (array)$options);
 
-    switch($my['options']['output'])
-    {
-	    case 'count':
-	       	$rs = 0;	   
-	    break;
+  // null => do not filter
+  $my['filters'] = array('status' => null, 'type' => null);
+  $my['filters'] = array_merge($my['filters'], (array)$filters);
 
-    	case 'standard':
-    	default;
+  switch($my['options']['output']) {
+	  case 'count':
+	   	$rs = 0;	   
+	  break;
+
+  	case 'standard':
+   	default:
 			$rs = null;
-	    break;
-    }
+	  break;
+  }
 
 	
-	$sql = '';
 	$tcase_filter = '';
-    // First Step - get only req info
+  
+	// First Step - get only req info
 	$sql = "/* $debugMsg */ SELECT NH_REQ.id FROM {$this->tables['nodes_hierarchy']} NH_REQ ";
-	switch($range)
-	{
+	$addFields = '';
+	switch($range) {
 		case 'all';
-			break;
+		break;
 
 		case 'assigned':
-			$sql .= " JOIN {$this->tables['req_coverage']} REQ_COV ON REQ_COV.req_id=NH_REQ.id ";
-			if(!is_null($testcase_id))
-			{       
-		    	$tcase_filter = " AND REQ_COV.testcase_id={$testcase_id}";
-	  		}
-	  		break;
+			$sql .= " JOIN {$this->tables['req_coverage']} 
+                REQ_COV ON REQ_COV.req_id = NH_REQ.id ";
+
+      if(!is_null($testcase_id)) {       
+        $tcase_filter = " AND REQ_COV.testcase_id = {$testcase_id}";
+      }
+	 	break;
 	}
+
+	$sql = sprintf($sql,$addFields);
+
 	$sql .= " WHERE NH_REQ.parent_id={$id} " .
 	        " AND NH_REQ.node_type_id = {$this->node_types_descr_id['requirement']} {$tcase_filter}";
 	$itemSet = $this->db->fetchRowsIntoMap($sql,'id');
-   
-	if( !is_null($itemSet) )
-	{
+
+	if( !is_null($itemSet) ) {
 		$reqSet = array_keys($itemSet);
 		$sql = "/* $debugMsg */ SELECT MAX(NH_REQV.id) AS version_id" . 
 		       " FROM {$this->tables['nodes_hierarchy']} NH_REQV " .
@@ -619,30 +638,130 @@ function get_requirements($id, $range = 'all', $testcase_id = null, $options=nul
 		       " GROUP BY NH_REQV.parent_id ";
 
 		$latestVersionSet = $this->db->fetchRowsIntoMap($sql,'version_id');
-	    $reqVersionSet = array_keys($latestVersionSet);
+	  $reqVersionSet = array_keys($latestVersionSet);
 
-	    $getOptions = null;
-	    if( !is_null($my['options']['order_by']) )
-	    {
-			$getOptions = array('order_by' => $my['options']['order_by']);
-		}
-		$rs = $req_mgr->get_by_id($reqSet,$reqVersionSet,null,$getOptions,$my['filters']);	    	
-        
-        switch($my['options']['output'])
-        {
-        	case 'standard':
-		    break;
+    $getOptions['order_by'] = $my['options']['order_by'];
+    $getOptions['outputLevel'] = $my['options']['outputLevel'];
+    $getOptions['decodeUsers'] = $my['options']['decodeUsers'];
+
+
+	  $rs = $this->req_mgr->get_by_id($reqSet,$reqVersionSet,null,
+                                    $getOptions,$my['filters']);	 
+
+    switch($my['options']['output']) {
+     	case 'standard':
+		  break;
 		    
-		    case 'count':
-		       	$rs = !is_null($rs) ? count($rs) : 0;	   
-		    break;
+		  case 'count':
+		   	$rs = !is_null($rs) ? count($rs) : 0;	   
+		  break;
 		}
 	}
-	return $rs;
+
+	// get child requirements
+	$reqSql = "SELECT NH_REQ.id FROM {$this->tables['nodes_hierarchy']} NH_REQ WHERE NH_REQ.parent_id={$id}";
+
+	$itemSetAllFolder = $this->db->fetchRowsIntoMap($reqSql,'id');
 	
+	if(!is_null($itemSetAllFolder)){
+
+		foreach($itemSetAllFolder as $key => $value){
+
+			$sql= '';
+			$tcase_filter = '';
+		  
+			// First Step - get only req info
+			$sql = "/* $debugMsg */ SELECT NH_REQ.id FROM {$this->tables['nodes_hierarchy']} NH_REQ ";
+			$addFields = '';
+			switch($range)
+			{
+				case 'all';
+				break;
+
+				case 'assigned':
+					$sql .= " JOIN {$this->tables['req_coverage']} REQ_COV ON REQ_COV.req_id=NH_REQ.id ";
+			  if(!is_null($testcase_id))
+			  {       
+				$tcase_filter = " AND REQ_COV.testcase_id={$testcase_id}";
+			  }
+			 break;
+			}
+
+			$sql = sprintf($sql,$addFields);
+
+			$sql .= " WHERE NH_REQ.parent_id=" . $value['id'] .
+					" AND NH_REQ.node_type_id = {$this->node_types_descr_id['requirement']} {$tcase_filter}";
+			$itemSet = $this->db->fetchRowsIntoMap($sql,'id');
+
+      // var_dump($sql);
+
+			if( !is_null($itemSet) )
+			{
+				$reqSet = array_keys($itemSet);
+				$sql = "/* $debugMsg */ SELECT MAX(NH_REQV.id) AS version_id" . 
+					   " FROM {$this->tables['nodes_hierarchy']} NH_REQV " .
+					   " WHERE NH_REQV.parent_id IN (" . implode(",",$reqSet) . ") " .
+					   " GROUP BY NH_REQV.parent_id ";
+
+				$latestVersionSet = $this->db->fetchRowsIntoMap($sql,'version_id');
+				$reqVersionSet = array_keys($latestVersionSet);
+				
+				$getOptions['order_by'] = $my['options']['order_by'];
+				$getOptions['outputLevel'] = $my['options']['outputLevel'];
+				$getOptions['decodeUsers'] = $my['options']['decodeUsers'];
+				
+				if(is_null($rs)){
+					$rs =  $this->req_mgr->get_by_id($reqSet,$reqVersionSet,null,$getOptions,$my['filters']);	
+				} else {
+					$rs = array_merge($rs, $this->req_mgr->get_by_id($reqSet,$reqVersionSet,null,$getOptions,$my['filters']));
+				}
+				
+
+				switch($my['options']['output'])
+				{
+				case 'standard':
+				  break;
+					
+				  case 'count':
+					$rs = !is_null($rs) ? count($rs) : 0;	   
+				  break;
+				}
+			}
+		}
+	}
+
+	return $rs;
 }
 
 
+/** get child requirements for get all testcase associate.
+ * args: id: requirement id
+ *
+ *   returns: array of rows
+ */
+function get_requirement_child_by_id($id){
+
+	$children = $this->get_requirement_child_by_id_req($id);
+	foreach($children as $key => $child){
+		array_push($this->requirement_child_ids, $child);
+		$this->get_requirement_child_by_id($child["destination_id"]);
+	}
+	return $this->requirement_child_ids;
+}
+
+/**
+ * get child requirements by id.
+ * args: id: requirement spec id
+ *
+ *   returns: array of rows
+ */
+function get_requirement_child_by_id_req($id){
+	$sql = "/* $debugMsg */ SELECT REQ_REL.destination_id, REQ.req_doc_id, NH.name FROM req_relations REQ_REL INNER 
+	JOIN nodes_hierarchy NH ON REQ_REL.destination_id = NH.id
+	JOIN {$this->tables['requirements']} REQ ON REQ_REL.destination_id = REQ.id where REQ_REL.source_id={$id}";
+	$child = $this->db->get_recordset($sql);
+	return $child;
+}
 
   /*
     function: get_by_title
@@ -669,45 +788,45 @@ function get_requirements($id, $range = 'all', $testcase_id = null, $options=nul
                     modifier_id
                     modification_ts
   */
-function get_by_title($title,$tproject_id=null,$parent_id=null,$case_analysis=self::CASE_SENSITIVE)
-{
-   	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-  	$output=null;
-  	$title=trim($title);
-    $the_title=$this->db->prepare_string($title);
-  	$sql = "/* $debugMsg */ " .
-  		   " SELECT RSPEC.id,testproject_id,RSPEC,doc_id,RSPEC.scope,RSPEC.total_req,RSPEC.type," .
-           " RSPEC.author_id,RSPEC.creation_ts,RSPEC.modifier_id," .
-           " RSPEC.modification_ts,NH.name AS title " .
-  	       " FROM {$this->object_table} RSPEC, {$this->tables['nodes_hierarchy']} NH";
+  function get_by_title($title,$tproject_id=null,$parent_id=null,$case_analysis=self::CASE_SENSITIVE)
+  {
+     	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    	$output=null;
+    	$title=trim($title);
+      $the_title=$this->db->prepare_string($title);
+    	$sql = "/* $debugMsg */ " .
+    		     " SELECT RSPEC.id,testproject_id,RSPEC.doc_id,RSPEC.scope,RSPEC.total_req,RSPEC.type," .
+             " RSPEC.author_id,RSPEC.creation_ts,RSPEC.modifier_id," .
+             " RSPEC.modification_ts,NH.name AS title " .
+    	       " FROM {$this->object_table} RSPEC, {$this->tables['nodes_hierarchy']} NH";
 
-    switch ($case_analysis)
-    {
-        case self::CASE_SENSITIVE:
-            $sql .= " WHERE NH.name='{$the_title}'";
-        break;
+      switch ($case_analysis)
+      {
+          case self::CASE_SENSITIVE:
+              $sql .= " WHERE NH.name='{$the_title}'";
+          break;
 
-        case self::CASE_INSENSITIVE:
-            $sql .= " WHERE UPPER(NH.name)='" . strtoupper($the_title) . "'";    
-        break;
-    }
-  	$sql .= " AND RSPEC.id=NH.id ";
+          case self::CASE_INSENSITIVE:
+              $sql .= " WHERE UPPER(NH.name)='" . strtoupper($the_title) . "'";    
+          break;
+      }
+    	$sql .= " AND RSPEC.id=NH.id ";
 
 
-  	if( !is_null($tproject_id) )
-  	{
-  	  $sql .= " AND RSPEC.testproject_id={$tproject_id}";
-    }
+    	if( !is_null($tproject_id) )
+    	{
+    	  $sql .= " AND RSPEC.testproject_id={$tproject_id}";
+      }
 
-  	if( !is_null($parent_id) )
-  	{
-  	  $sql .= " AND NH.parent_id={$parent_id}";
-    }
+    	if( !is_null($parent_id) )
+    	{
+    	  $sql .= " AND NH.parent_id={$parent_id}";
+      }
 
-    $sql .= " AND RSPEC.id=NH.id ";
-    $output = $this->db->fetchRowsIntoMap($sql,'id');
+      $sql .= " AND RSPEC.id=NH.id ";
+      $output = $this->db->fetchRowsIntoMap($sql,'id');
 
-  	return $output;
+    	return $output;
   }
 
   /*
@@ -796,8 +915,6 @@ function get_by_title($title,$tproject_id=null,$parent_id=null,$case_analysis=se
   {
   	$cfg = config_get('req_cfg');
   	
-  	// 20091223 - this has to be removed if we remove unique index
-  	// $my_parent_id = $cfg->child_requirements_mgmt == ENABLED ? null : $parent_id;
     $my_parent_id = $parent_id;
 
     $ret['status_ok'] = 1;
@@ -818,21 +935,6 @@ function get_by_title($title,$tproject_id=null,$parent_id=null,$case_analysis=se
   		$ret['msg'] = lang_get("warning_empty_doc_id");
   	}
   	
-  	// 20091223 - franciscom -
-  	// Now that req spec has doc id, IMHO this check has not to be done
-  	// or must be improved
-  	//
-  	// if($ret['status_ok'])
-  	// {
-	// 	$ret['msg']='ok';
-    //   	$rs = $this->get_by_title($title,$tproject_id,$my_parent_id,$case_analysis);
-  	// 	if(!is_null($rs) && (is_null($id) || !isset($rs[$id])))
-    //   	{
-    //   		$info = current($rs);
-  	// 		$ret['msg'] = sprintf(lang_get("warning_duplicated_req_spec_title"),$info['doc_id'],$title);
-    //     	$ret['status_ok'] = 0;
-  	// 	}
-	// }
 
   	if($ret['status_ok'])
   	{
@@ -881,413 +983,495 @@ function get_by_title($title,$tproject_id=null,$parent_id=null,$case_analysis=se
   {
   	// filters => array('status' => NON_TESTABLE_REQ, 'type' => 'X');
   	$options = array('output' => 'count');
-	$count = $this->get_requirements($id,$range,$testcase_id,$options,$filters);
-	return $count;
+	  $count = $this->get_requirements($id,$range,$testcase_id,$options,$filters);
+	  return $count;
   }
 
 
-/**
- * getReqTree
- *
- * Example of returned value ( is a recursive one ) 
- * (
- *    [childNodes] => Array
- *        ([0] => Array
- *                (   [id] => 216
- *                    [parent_id] => 179
- *                    [node_type_id] => 6
- *                    [node_order] => 0
- *                    [node_table] => req_specs
- *                    [name] => SUB-R
- *                    [childNodes] => Array
- *                        ([0] => Array
- *                                (   [id] => 181
- *                                    [parent_id] => 216
- *                                    [node_type_id] => 7
- *                                    [node_order] => 0
- *                                    [node_table] => requirements
- *                                    [name] => Gamma Ray Emissions
- *                                    [childNodes] => 
- *                                )
- *                         [1] => Array
- *                                (   [id] => 182
- *                                    [parent_id] => 216
- *                                    [node_type_id] => 7
- *                                    [node_order] => 0
- *                                    [node_table] => requirements
- *                                    [name] => Coriolis Effet
- *                                    [childNodes] => 
- *                                )
- *                        )
- *                )
- *            [1] => Array
- *                (   [id] => 217
- *                    [parent_id] => 179
- *                    [node_type_id] => 6
- *                    [node_order] => 0
- *                    [node_table] => req_specs
- *                    [name] => SUB-R2
- *                    [childNodes] => Array
- *                    ...
- *
- *
- */
-function getReqTree($id)
-{
-    $filters=null;
-    $options=array('recursive' => true);
-    $map = $this->tree_mgr->get_subtree($id,$filters,$options);
-    return $map;  
-}
+  /**
+   * getReqTree
+   *
+   * Example of returned value ( is a recursive one ) 
+   * (
+   *    [childNodes] => Array
+   *        ([0] => Array
+   *                (   [id] => 216
+   *                    [parent_id] => 179
+   *                    [node_type_id] => 6
+   *                    [node_order] => 0
+   *                    [node_table] => req_specs
+   *                    [name] => SUB-R
+   *                    [childNodes] => Array
+   *                        ([0] => Array
+   *                                (   [id] => 181
+   *                                    [parent_id] => 216
+   *                                    [node_type_id] => 7
+   *                                    [node_order] => 0
+   *                                    [node_table] => requirements
+   *                                    [name] => Gamma Ray Emissions
+   *                                    [childNodes] => 
+   *                                )
+   *                         [1] => Array
+   *                                (   [id] => 182
+   *                                    [parent_id] => 216
+   *                                    [node_type_id] => 7
+   *                                    [node_order] => 0
+   *                                    [node_table] => requirements
+   *                                    [name] => Coriolis Effet
+   *                                    [childNodes] => 
+   *                                )
+   *                        )
+   *                )
+   *            [1] => Array
+   *                (   [id] => 217
+   *                    [parent_id] => 179
+   *                    [node_type_id] => 6
+   *                    [node_order] => 0
+   *                    [node_table] => req_specs
+   *                    [name] => SUB-R2
+   *                    [childNodes] => Array
+   *                    ...
+   *
+   *
+   */
+  function getReqTree($id)
+  {
+      $filters=null;
+      $options=array('recursive' => true);
+      $map = $this->tree_mgr->get_subtree($id,$filters,$options);
+      return $map;  
+  }
 
 
-/**
- * exportReqSpecToXML
- * create XML string with following req spec data
- *  - basic data (title, scope)
- *  - custom fields values
- *  - children: can be other req spec  or requirements (tree leaves)
- *
- * Developed using exportTestSuiteDataToXML() as model
- *
- * @internal revision
- * 20100320 - franciscom - added TYPE
- * 20091122 - franciscom - added doc id management  
- */
-function exportReqSpecToXML($id,$tproject_id,$optExport=array())
-{
-	static $req_mgr;
-	 
-	// manage missing keys
-	$optionsForExport=array('RECURSIVE' => true);
-	foreach($optionsForExport as $key => $value)
-	{
-	    $optionsForExport[$key]=isset($optExport[$key]) ? $optExport[$key] : $value;      
+  /**
+   * exportReqSpecToXML
+   * create XML string with following req spec data
+   *  - basic data (title, scope)
+   *  - custom fields values
+   *  - children: can be other req spec  or requirements (tree leaves)
+   *
+   * Developed using exportTestSuiteDataToXML() as model
+   *
+   * @internal revision
+   */
+  function exportReqSpecToXML($id,$tproject_id,$optionsForExport=array())
+  {
+  	// manage missing keys; recursive export by default
+    if( !array_key_exists('RECURSIVE',$optionsForExport) ){
+	  $optionsForExport['RECURSIVE'] = true;
 	}
-	
-	$cfXML=null;
-	$xmlData = null;
-	if($optionsForExport['RECURSIVE'])
-	{
-	  	$cfXML = $this->customFieldValuesAsXML($id,$tproject_id);
-		$containerData = $this->get_by_id($id);
-	  	$xmlData = "<req_spec title=\"" . htmlspecialchars($containerData['title']) . '" ' .
-	  	           " doc_id=\"" . htmlspecialchars($containerData['doc_id']) . '" >' .
-	               "\n<type><![CDATA[{$containerData['type']}]]></type>\n" .
-	               "\n<node_order><![CDATA[{$containerData['node_order']}]]></node_order>\n" .
-	               "\n<total_req><![CDATA[{$containerData['total_req']}]]></total_req>\n" .
-	               "<scope>\n<![CDATA[{$containerData['scope']}]]>\n</scope>\n{$cfXML}";
-	}
- 
-	$req_spec = $this->getReqTree($id);
-	$childNodes = isset($req_spec['childNodes']) ? $req_spec['childNodes'] : null ;
-	if( !is_null($childNodes) )
-	{
-	    $loop_qty=sizeof($childNodes); 
-	    for($idx = 0;$idx < $loop_qty;$idx++)
-	    {
-	    	$cNode = $childNodes[$idx];
-	    	$nTable = $cNode['node_table'];
-	    	if($optionsForExport['RECURSIVE'] && $cNode['node_table'] == 'req_specs')
-	    	{
-	    		$xmlData .= $this->exportReqSpecToXML($cNode['id'],$tproject_id,$optionsForExport);
-	    	}
-	    	else if ($cNode['node_table'] == 'requirements')
-	    	{
-	    	  	if( is_null($req_mgr) )
-	    	  	{
-	    	      $req_mgr = new requirement_mgr($this->db);
-	    		}
-	    		$xmlData .= $req_mgr->exportReqToXML($cNode['id'],$tproject_id);
-	    	}
+  	
+    $relXmlData = '';
+    $relationsCache = array();
+
+  	$cfXML=null;
+  	$xmlData = null;
+  	if($optionsForExport['RECURSIVE'])
+  	{
+    	$cfXML = $this->customFieldValuesAsXML($id,$tproject_id);
+  		$containerData = $this->get_by_id($id);
+    	$xmlData = "<req_spec title=\"" . htmlspecialchars($containerData['title']) . '" ' .
+    	           " doc_id=\"" . htmlspecialchars($containerData['doc_id']) . '" ' . ' >' . "\n".
+    	           "\t<revision><![CDATA[{$containerData['revision']}]]></revision>\n" .
+                 "\t<type><![CDATA[{$containerData['type']}]]></type>\n" .
+                 "\t<node_order><![CDATA[{$containerData['node_order']}]]></node_order>\n" .
+                 "\t<total_req><![CDATA[{$containerData['total_req']}]]></total_req>\n" .
+                 "\t<scope><![CDATA[{$containerData['scope']}]]></scope>\n\t\t{$cfXML}";
+  	}
+   
+	// Add attachments info	
+	if (isset($optionsForExport['ATTACHMENTS']) && $optionsForExport['ATTACHMENTS'])
+    {
+		$attachments=null;
+		// get all attachments
+		$attachmentInfos = $this->attachmentRepository->getAttachmentInfosFor($id,$this->attachmentTableName,'id');
+	  
+		// get all attachments content and encode it in base64	  
+		if ($attachmentInfos)
+		{
+			foreach ($attachmentInfos as $attachmentInfo)
+			{
+				$aID = $attachmentInfo["id"];
+				$content = $this->attachmentRepository->getAttachmentContent($aID, $attachmentInfo);
+				
+				if ($content != null)
+				{
+					$attachments[$aID]["id"] = $aID;
+					$attachments[$aID]["name"] = $attachmentInfo["file_name"];
+					$attachments[$aID]["file_type"] = $attachmentInfo["file_type"];
+					$attachments[$aID]["title"] = $attachmentInfo["title"];
+					$attachments[$aID]["date_added"] = $attachmentInfo["date_added"];
+					$attachments[$aID]["content"] = base64_encode($content);
+				}
+			}
 	    }
-	}    
-	if ($optionsForExport['RECURSIVE'])
-	{
-		$xmlData .= "</req_spec>";
-	}
-	return $xmlData;
-}
+	  
+		if( !is_null($attachments) && count($attachments) > 0 )
+		{
+			$attchRootElem = "\t<attachments>\n{{XMLCODE}}\t</attachments>\n";
+			$attchElemTemplate = "\t\t<attachment>\n" .
+							   "\t\t\t<id><![CDATA[||ATTACHMENT_ID||]]></id>\n" .
+							   "\t\t\t<name><![CDATA[||ATTACHMENT_NAME||]]></name>\n" .
+							   "\t\t\t<file_type><![CDATA[||ATTACHMENT_FILE_TYPE||]]></file_type>\n" .
+							   "\t\t\t<title><![CDATA[||ATTACHMENT_TITLE||]]></title>\n" .
+							   "\t\t\t<date_added><![CDATA[||ATTACHMENT_DATE_ADDED||]]></date_added>\n" .
+							   "\t\t\t<content><![CDATA[||ATTACHMENT_CONTENT||]]></content>\n" .
+							   "\t\t</attachment>\n";
 
-
-/**
- * xmlToReqSpec
- *
- * @param object $source:  
- *               $source->type: possible values 'string', 'file'
- *               $source->value: depends of $source->type 
- *                               'string' => xml string
- *                               'file' => path name of XML file
- *                     
- */
-function xmlToReqSpec($source)
-{
-    $status_ok=true;
-    $xml_string=null;
-    $req_spec=null;
-    switch( $source->type )
-    {
-        case 'string':
-            $xml_string = $source->value;
-        break; 
-          
-        case 'file':
-            $xml_file = $source->value;
-	          $status_ok=!(($xml_object=@simplexml_load_file($xml_file)) === FALSE);
-        break; 
+			$attchDecode = array ("||ATTACHMENT_ID||" => "id", "||ATTACHMENT_NAME||" => "name",
+								"||ATTACHMENT_FILE_TYPE||" => "file_type", "||ATTACHMENT_TITLE||" => "title",
+								"||ATTACHMENT_DATE_ADDED||" => "date_added", "||ATTACHMENT_CONTENT||" => "content");
+			$xmlData .= exportDataToXML($attachments,$attchRootElem,$attchElemTemplate,$attchDecode,true);
+        }
     }
+	
+  	$req_spec = $this->getReqTree($id);
+  	$childNodes = isset($req_spec['childNodes']) ? $req_spec['childNodes'] : null ;
+  	if( !is_null($childNodes) )
+  	{
+      $loop_qty=sizeof($childNodes); 
+      for($idx = 0;$idx < $loop_qty;$idx++)
+      {
+  	    $cNode = $childNodes[$idx];
+  	    $nTable = $cNode['node_table'];
+  	    if($optionsForExport['RECURSIVE'] && $cNode['node_table'] == 'req_specs')
+  	    {
+  	    	$xmlData .= $this->exportReqSpecToXML($cNode['id'],$tproject_id,$optionsForExport);
+  	    }
+  	    else if ($cNode['node_table'] == 'requirements')
+  	    {
+          $xmlData .= $this->req_mgr->exportReqToXML($cNode['id'],$tproject_id,$optionsForExport['ATTACHMENTS']);
 
-    if( $status_ok )
-    {
-      
-    }
-
-    return $req_spec;
-}
-
-/**
- * xmlToMapReqSpec
- *
- */
-function xmlToMapReqSpec($xml_item,$level=0)
-{
-    static $iterations=0;
-    static $mapped;
-    static $req_mgr;
-    
-    // Attention: following PHP Manual SimpleXML documentation, Please remember to cast
-    //            before using data from $xml,
-    if( is_null($xml_item) )
-    {
-        return null;      
-    }
-    
-    // used to reset static structures if calling this in loop
-    if($level == 0)
-    {
-    	$iterations = 0;
-    	$mapped = null;
-    }
-    
-    $dummy=array();
-    $dummy['node_order'] = (int)$xml_item->node_order;
-    $dummy['scope'] = (string)$xml_item->scope;
-    $dummy['type'] = (int)$xml_item->type;
-    $dummy['total_req'] = (int)$xml_item->total_req;
-    $dummy['level'] = $level;
-    $depth=$level+1;
-    
-    foreach($xml_item->attributes() as $key => $value)
-    {
-       $dummy[$key] = (string)$value;  // See PHP Manual SimpleXML documentation.
-    }    
-    
-    
-    if( property_exists($xml_item,'custom_fields') )	              
-    {
-          $dummy['custom_fields']=array();
-          foreach($xml_item->custom_fields->children() as $key)
+          $relations = $this->req_mgr->get_relations($cNode['id']);
+          if( !is_null($relations['relations']) && count($relations['relations']) > 0 )
           {
-             $dummy['custom_fields'][(string)$key->name]= (string)$key->value;
-          }    
-    }
-    $mapped[]=array('req_spec' => $dummy, 'requirements' => null, 
-                    'level' => $dummy['level']);
+            foreach($relations['relations'] as $key => $rel) 
+            {
+              // If we have already found this relation, skip it.
+              if ( !in_array($rel['id'], $relationsCache) ) 
+              {
+                // otherwise export it to XML.
+                $testproject_id = $this->relationsCfg->interProjectLinking ? $tproject_id : null;
+                $relXmlData .= $this->req_mgr->exportRelationToXML($rel,$tproject_id,
+                                                                   $this->relationsCfg->interProjectLinking);
+                $relationsCache[] = $rel['id'];
+              }
+            }
+          }
+  	    }
+      }
 
-    // Process children
-    if( property_exists($xml_item,'requirement') )	              
-    {
-        if( is_null($req_mgr) )
-        {
-            $req_mgr = new requirement_mgr($this->db);
-        }
-        $loop2do=count($xml_item->requirement);
-        for($idx=0; $idx <= $loop2do; $idx++)
-        {
-            $xml_req=$req_mgr->xmlToMapRequirement($xml_item->requirement[$idx]);
-            if(!is_null($xml_req))
-            { 
-                $fdx=count($mapped)-1;
-                $mapped[$fdx]['requirements'][]=$xml_req;
+      // after we scanned all relations and exported all relations to xml, let's output it to the XML buffer
+      $xmlData .= $relXmlData;
+  	}    
+
+  	if ($optionsForExport['RECURSIVE'])
+  	{
+  		$xmlData .= "</req_spec>\n";
+  	}
+  	return $xmlData;
+  }
+
+  /**
+   * xmlToReqSpec
+   *
+   * @param object $source:  
+   *               $source->type: possible values 'string', 'file'
+   *               $source->value: depends of $source->type 
+   *                               'string' => xml string
+   *                               'file' => path name of XML file
+   *                     
+   */
+  function xmlToReqSpec($source)
+  {
+      $status_ok=true;
+      $xml_string=null;
+      $req_spec=null;
+      switch( $source->type )
+      {
+          case 'string':
+              $xml_string = $source->value;
+          break; 
+            
+          case 'file':
+              $xml_file = $source->value;
+  	          $status_ok=!(($xml_object=@$this->simplexml_load_file_helper($xml_file)) === FALSE);
+          break; 
+      }
+
+      if( $status_ok )
+      {
+        
+      }
+
+      return $req_spec;
+  }
+
+  /**
+   * xmlToMapReqSpec
+   *
+   */
+  function xmlToMapReqSpec($xml_item,$level=0)
+  {
+      static $iterations=0;
+      static $mapped;
+
+      // Attention: following PHP Manual SimpleXML documentation, Please remember to cast
+      //            before using data from $xml,
+      if( is_null($xml_item) )
+      {
+          return null;      
+      }
+      
+      // used to reset static structures if calling this in loop
+      if($level == 0)
+      {
+      	$iterations = 0;
+      	$mapped = null;
+      }
+      
+      $dummy=array();
+      $dummy['node_order'] = (int)$xml_item->node_order;
+      $dummy['scope'] = (string)$xml_item->scope;
+      $dummy['type'] = (int)$xml_item->type;
+      $dummy['total_req'] = (int)$xml_item->total_req;
+      $dummy['level'] = $level;
+      $depth=$level+1;
+      
+      foreach($xml_item->attributes() as $key => $value)
+      {
+         $dummy[$key] = (string)$value;  // See PHP Manual SimpleXML documentation.
+      }    
+      
+      
+      if( property_exists($xml_item,'custom_fields') )	              
+      {
+            $dummy['custom_fields']=array();
+            foreach($xml_item->custom_fields->children() as $key)
+            {
+               $dummy['custom_fields'][(string)$key->name]= (string)$key->value;
             }    
-        }    
-    }        
-    if( property_exists($xml_item,'req_spec') )	              
-    {
-        $loop2do=count($xml_item->req_spec);
-        for($idx=0; $idx <= $loop2do; $idx++)
-        {
-            $this->xmlToMapReqSpec($xml_item->req_spec[$idx],$depth);
-        }
-    }        
-    
-    return $mapped;
-}
+      }
+	  
+	  if( property_exists($xml_item,'attachments') )
+	  {
+		$dummy['attachments'] = array();
+		foreach($xml_item->attachments->children() as $attachment)
+		{
+		  $attach_id = (int)$attachment->id;
+		  $dummy['attachments'][$attach_id]['id'] = (int)$attachment->id;
+		  $dummy['attachments'][$attach_id]['name'] = (string)$attachment->name;
+		  $dummy['attachments'][$attach_id]['file_type'] = (string)$attachment->file_type;
+		  $dummy['attachments'][$attach_id]['title'] = (string)$attachment->title;
+		  $dummy['attachments'][$attach_id]['date_added'] = (string)$attachment->date_added;
+		  $dummy['attachments'][$attach_id]['content'] = (string)$attachment->content;  
+		}
+	  }
+      $mapped[]=array('req_spec' => $dummy, 'requirements' => null, 
+                      'level' => $dummy['level']);
+
+      // Process children
+      if( property_exists($xml_item,'requirement') )	              
+      {
+          $loop2do=count($xml_item->requirement);
+          for($idx=0; $idx <= $loop2do; $idx++)
+          {
+              $xml_req=$this->req_mgr->xmlToMapRequirement($xml_item->requirement[$idx]);
+              if(!is_null($xml_req))
+              { 
+                  $fdx=count($mapped)-1;
+                  $mapped[$fdx]['requirements'][]=$xml_req;
+              }    
+          }    
+      }        
+
+      if( property_exists($xml_item,'relation') )               
+      {
+          $loop3do=count($xml_item->relation);
+          for($idx=0; $idx <= $loop3do; $idx++)
+          {
+              $rel=$this->req_mgr->convertRelationXmlToRelationMap($xml_item->relation[$idx]);
+              if(!is_null($rel))
+              { 
+                  $fdx=count($mapped)-1;
+                  $mapped[$fdx]['relations'][]=$rel;
+              }    
+          } 
+      } 
+
+      if( property_exists($xml_item,'req_spec') )	              
+      {
+          $loop2do=count($xml_item->req_spec);
+          for($idx=0; $idx <= $loop2do; $idx++)
+          {
+              $this->xmlToMapReqSpec($xml_item->req_spec[$idx],$depth);
+          }
+      }        
+      
+      return $mapped;
+  }
 
 
-// ---------------------------------------------------------------------------------------
-// Custom field related functions
-// ---------------------------------------------------------------------------------------
+  // Custom field related functions
 
-/*
-  function: get_linked_cfields
-            Get all linked custom fields.
-            Remember that custom fields are defined at system wide level, and
-            has to be linked to a testproject, in order to be used.
+  /*
+    function: get_linked_cfields
+              Get all linked custom fields.
+              Remember that custom fields are defined at system wide level, and
+              has to be linked to a testproject, in order to be used.
 
 
-  args: id: requirement spec id
-        [tproject_id]: node id of parent testproject of requirement spec.
-                       need to understand to which testproject requirement spec belongs.
-                       this information is vital, to get the linked custom fields.
-                       Presence /absence of this value changes starting point
-                       on procedure to build tree path to get testproject id.
+    args: credentials, map with following keys
+  			item_id: Req. Spec REVISION ID (can be NULL if parent_id IS NOT NULL)
+    			parent_id: Req. Spec ID (can be NULL if item_id IS NOT NULL)
+          	tproject_id:node id of parent testproject of requirement spec.
+  						need to understand to which testproject requirement spec belongs.
+  						this information is vital, to get the linked custom fields.
+  						Presence /absence of this value changes starting point
+  						on procedure to build tree path to get testproject id.
 
-                       null -> use requirement spec id as starting point.
-                       !is_null -> use this value as starting point.
+  						null -> use requirement spec id as starting point.
+  						!is_null -> use this value as starting point.
 
-  returns: map/hash
-           key: custom field id
-           value: map with custom field definition and value assigned for choosen req spec,
-                  with following keys:
+    returns: map/hash
+             key: custom field id
+             value: map with custom field definition and value assigned for choosen req spec,
+                    with following keys:
 
-            			id: custom field id
-            			name
-            			label
-            			type: custom field type
-            			possible_values: for custom field
-            			default_value
-            			valid_regexp
-            			length_min
-            			length_max
-            			show_on_design
-            			enable_on_design
-            			show_on_execution
-            			enable_on_execution
-            			display_order
-            			value: value assigned to custom field for this req spec
-            			       null if for this  req spec custom field was never edited.
+              			id: custom field id
+              			name
+              			label
+              			type: custom field type
+              			possible_values: for custom field
+              			default_value
+              			valid_regexp
+              			length_min
+              			length_max
+              			show_on_design
+              			enable_on_design
+              			show_on_execution
+              			enable_on_execution
+              			display_order
+              			value: value assigned to custom field for this req spec
+              			       null if for this  req spec custom field was never edited.
 
-            			node_id:  req spec id
-            			         null if for this  req spec, custom field was never edited.
-
-
-  rev :
-       20070302 - check for $id not null, is not enough, need to check is > 0
-
-*/
-function get_linked_cfields($id,$tproject_id=null)
-{
-	if (!is_null($id) && $id > 0)
-	{
-		$req_spec_info = $this->get_by_id($id);
-		$tproject_id = $req_spec_info['testproject_id'];
-	}
-	$cf_map = $this->cfield_mgr->get_linked_cfields_at_design($tproject_id,cfield_mgr::CF_ENABLED,null,
-	                                                          'requirement_spec',$id);
-	return $cf_map;
-}
+              			node_id:  req spec id
+              			         null if for this  req spec, custom field was never edited.
 
 
-/*
-  function: html_table_of_custom_field_inputs
-            Return html code, implementing a table with custom fields labels
-            and html inputs, for choosen req spec.
-            Used to manage user actions on custom fields values.
+    @internal revisions
+
+  */
+  function get_linked_cfields($credentials)
+  {
+  	$who = array('item_id' => null, 'parent_id' => null, 'tproject_id' => null);
+  	$who = array_merge($who, (array)$credentials);
+
+  	$tproject_id = $who['tproject_id'];
+  	$hasParentInfo = !is_null($who['parent_id']) && ($who['parent_id'] > 0);
+  	
+  	if($hasParentInfo && (is_null($tproject_id) || is_null($who['item_id']) ))
+  	{
+  		// will get info for LAST revision
+  		$info = $this->get_by_id($who['parent_id'],array('output' => 'credentials'));
+  		$tproject_id = $info['testproject_id'];
+  		$who['item_id'] = $info['revision_id'];
+  	} 
+  	$cf_map = $this->cfield_mgr->get_linked_cfields_at_design($tproject_id,cfield_mgr::CF_ENABLED,null,
+  	                                                          'requirement_spec',$who['item_id']);
+  	return $cf_map;
+  }
 
 
-  args: $id
-        [tproject_id]: node id of testproject (req spec parent).
-                       this information is vital, to get the linked custom fields,
-                       because custom fields are system wide, but to be used are
-                       assigned to a test project.
-                       is null this method or other called will use get_path() 
-                       method to get test project id.
-
-        [parent_id]: Need to e rethinked, may be remove (20090111 - franciscom)
-
-        [$name_suffix]: must start with '_' (underscore).
-                        Used when we display in a page several items
-                        (example during test case execution, several test cases)
-                        that have the same custom fields.
-                        In this kind of situation we can use the item id as name suffix.
+  /*
+    function: html_table_of_custom_field_inputs
+              Return html code, implementing a table with custom fields labels
+              and html inputs, for choosen req spec.
+              Used to manage user actions on custom fields values.
 
 
-  returns: html string
+    args: $id
+          [tproject_id]: node id of testproject (req spec parent).
+                         this information is vital, to get the linked custom fields,
+                         because custom fields are system wide, but to be used are
+                         assigned to a test project.
+                         is null this method or other called will use get_path() 
+                         method to get test project id.
 
-*/
-function html_table_of_custom_field_inputs($id,$tproject_id=null,$parent_id=null,$name_suffix='')
-{
+          [parent_id]: Need to e rethinked, may be remove (20090111 - franciscom)
+
+          [$name_suffix]: must start with '_' (underscore).
+                          Used when we display in a page several items
+                          (example during test case execution, several test cases)
+                          that have the same custom fields.
+                          In this kind of situation we can use the item id as name suffix.
+
+
+    returns: html string
+
+  */
+  function html_table_of_custom_field_inputs(	$id,$child_id,$tproject_id=null,$parent_id=null,
+  											$name_suffix='',$input_values = null)
+  {
     $NO_WARNING_IF_MISSING=true;
     $cf_smarty = '';
-    $cf_map = $this->get_linked_cfields($id,$tproject_id);
 
-	if(!is_null($cf_map))
-	{
-		$cf_smarty = "<table>";
-		foreach($cf_map as $cf_id => $cf_info)
-		{
-            $label=str_replace(TL_LOCALIZE_TAG,'',
-                               lang_get($cf_info['label'],null,$NO_WARNING_IF_MISSING));
+  	$idCard = array('parent_id' => $id, 'item_id' => $child_id, 'tproject_id' => $tproject_id);
+  	$cf_map = $this->get_linked_cfields($idCard);
+  	$cf_smarty = $this->cfield_mgr->html_table_inputs($cf_map,$name_suffix,$input_values);
 
-			$cf_smarty .= '<tr><td class="labelHolder">' . htmlspecialchars($label) . ":</td><td>" .
-				          $this->cfield_mgr->string_custom_field_input($cf_info,$name_suffix) .
-						  "</td></tr>\n";
-		}
-		$cf_smarty .= "</table>";
-	}
-	return $cf_smarty;
-}
+  	return $cf_smarty;
+  }
 
 
 
-/*
-  function: html_table_of_custom_field_values
-            Return html code, implementing a table with custom fields labels
-            and custom fields values, for choosen req spec.
-            You can think of this function as some sort of read only version
-            of html_table_of_custom_field_inputs.
+  /*
+    function: html_table_of_custom_field_values
+              Return html code, implementing a table with custom fields labels
+              and custom fields values, for choosen req spec.
+              You can think of this function as some sort of read only version
+              of html_table_of_custom_field_inputs.
 
 
-  args: $id
+    args: $id
 
-  returns: html string
+    returns: html string
 
-*/
-function html_table_of_custom_field_values($id,$tproject_id)
-{
+  */
+  function html_table_of_custom_field_values($id,$child_id,$tproject_id)
+  {
     $NO_WARNING_IF_MISSING=true;    
-	$cf_smarty = '';
-  	$cf_map = $this->get_linked_cfields($id,$tproject_id);
-	
-  	// BUGID 3989
-	$show_cf = config_get('custom_fields')->show_custom_fields_without_value;
-	  	
-  	if(!is_null($cf_map))
-	{
-		foreach($cf_map as $cf_id => $cf_info)
-		{
-			// if user has assigned a value, then node_id is not null
-			// BUGID 3989
-			if($cf_info['node_id'] || $show_cf)
-			{
-        		$label = str_replace(TL_LOCALIZE_TAG,'',
-        		                     lang_get($cf_info['label'],null,$NO_WARNING_IF_MISSING));
+  	$cf_smarty = '';
 
-				$cf_smarty .= '<tr><td class="labelHolder">' .
-								htmlspecialchars($label) . ":</td><td>" .
-								$this->cfield_mgr->string_custom_field_value($cf_info,$id) .
-								"</td></tr>\n";
-			}
-		}
+    	// $cf_map = $this->get_linked_cfields($id,$child_id,$tproject_id);
+  	$idCard = array('parent_id' => $id, 'item_id' => $child_id, 'tproject_id' => $tproject_id);
+  	$cf_map = $this->get_linked_cfields($idCard);
+  	$show_cf = config_get('custom_fields')->show_custom_fields_without_value;
+  	  	
+    	if(!is_null($cf_map))
+  	{
+  		foreach($cf_map as $cf_id => $cf_info)
+  		{
+  			// if user has assigned a value, then node_id is not null
+  			if($cf_info['node_id'] || $show_cf)
+  			{
+          		$label = str_replace(TL_LOCALIZE_TAG,'',
+          		                     lang_get($cf_info['label'],null,$NO_WARNING_IF_MISSING));
 
-		if(trim($cf_smarty) != "")
-		{
-			$cf_smarty = "<table>" . $cf_smarty . "</table>";
-		}
-	}
-	return $cf_smarty;
-} // function end
+  				$cf_smarty .= '<tr><td class="labelHolder">' .
+  								htmlspecialchars($label) . ":</td><td>" .
+  								$this->cfield_mgr->string_custom_field_value($cf_info,$id) .
+  								"</td></tr>\n";
+  			}
+  		}
+
+  		if(trim($cf_smarty) != "")
+  		{
+  			$cf_smarty = "<table>" . $cf_smarty . "</table>";
+  		}
+  	}
+  	return $cf_smarty;
+  } // function end
 
 
   /*
@@ -1330,16 +1514,18 @@ function html_table_of_custom_field_values($id,$tproject_id)
   *
   *
   */
- function customFieldValuesAsXML($id,$tproject_id)
- {
-	$xml = null;
-	$cfMap = $this->get_linked_cfields($id,$tproject_id);
-	if( !is_null($cfMap) && count($cfMap) > 0 )
-	{
-		$xml = $this->cfield_mgr->exportValueAsXML($cfMap);
-	}
-	return $xml;
- }
+  function customFieldValuesAsXML($id,$tproject_id)
+  {
+    $xml = null;
+	
+    $idCard = array('parent_id' => $id, 'item_id' => null, 'tproject_id' => $tproject_id); 
+  	$cfMap = $this->get_linked_cfields($idCard);
+  	if( !is_null($cfMap) && count($cfMap) > 0 )
+  	{
+  		$xml = $this->cfield_mgr->exportValueAsXML($cfMap);
+  	}
+  	return $xml;
+  }
 
 
  /**
@@ -1347,177 +1533,192 @@ function html_table_of_custom_field_values($id,$tproject_id)
   *
   *
   * @internal revisions
-  * 20100908 - franciscom - BUGID 3762 Import Req Spec - custom fields values are ignored 
   */
-function createFromXML($xml,$tproject_id,$parent_id,$author_id,$filters = null,$options=null)
-{
-	static $req_mgr;
-	static $labels;
+  function createFromXML($xml,$tproject_id,$parent_id,$author_id,$filters = null,$options=null)
+  {
+    static $labels;
     static $missingCfMsg;
-	static $linkedCF;
-	static $messages;
-	static $doProcessCF = false;
-	
-	// init static items
-	if( is_null($labels) )
-	{
-		$labels = array('import_req_spec_created' => '', 'import_req_spec_skipped' => '',
-						'import_req_spec_updated' => '', 'import_req_spec_ancestor_skipped' => '',
-						'import_req_created' => '','import_req_skipped' =>'', 'import_req_updated' => '');
-		foreach($labels as $key => $dummy)
-		{
-			$labels[$key] = lang_get($key);
-		}
-
-		$messages = array();
-  		$messages['cf_warning'] = lang_get('no_cf_defined_can_not_import');
-  		$messages['cfield'] = lang_get('cf_value_not_imported_missing_cf_on_testproject');
-
-    	$linkedCF = $this->cfield_mgr->get_linked_cfields_at_design($tproject_id,cfield_mgr::CF_ENABLED,null,
-    															 	'requirement_spec',null,'name');
-		$doProcessCF = true;
-	}
-	
-	$user_feedback = null;
+    static $linkedCF;
+    static $messages;
+    static $doProcessCF = false;
+    
+    // init static items
+    if( is_null($labels) )
+    {
+      $labels = array('import_req_spec_created' => '', 'import_req_spec_skipped' => '',
+                      'import_req_spec_updated' => '', 'import_req_spec_ancestor_skipped' => '',
+                      'import_req_created' => '','import_req_skipped' =>'', 'import_req_updated' => '');
+      foreach($labels as $key => $dummy)
+      {
+        $labels[$key] = lang_get($key);
+      }
+      
+      $messages = array();
+      $messages['cf_warning'] = lang_get('no_cf_defined_can_not_import');
+      $messages['cfield'] = lang_get('cf_value_not_imported_missing_cf_on_testproject');
+      
+      $linkedCF = $this->cfield_mgr->get_linked_cfields_at_design($tproject_id,cfield_mgr::CF_ENABLED,null,
+                                                                  'requirement_spec',null,'name');
+      $doProcessCF = true;       
+    }
+    
+    $user_feedback = null;
     $copy_reqspec = null;
     $copy_req = null;
-	$getOptions = array('output' => 'minimun');
-	$my['options'] = array('skipFrozenReq' => true);
-	$my['options'] = array_merge($my['options'], (array)$options);
-
-	// echo __CLASS__ . ' ' . __FUNCTION__;
-	// new dBug($options);
-	// new dBug($my['options']);
-
-	$items = $this->xmlToMapReqSpec($xml);
+    $getOptions = array('output' => 'minimun');
+    $my['options'] = array('skipFrozenReq' => true);
+    $my['options'] = array_merge($my['options'], (array)$options);
     
+    $items = $this->xmlToMapReqSpec($xml);
+      
     $has_filters = !is_null($filters);
     if($has_filters)
     {
-        if(!is_null($filters['requirements']))
+      if(!is_null($filters['requirements']))
+      {
+        foreach($filters['requirements'] as $reqspec_pos => $requirements_pos)
         {
-            foreach($filters['requirements'] as $reqspec_pos => $requirements_pos)
-            {
-                $copy_req[$reqspec_pos] = is_null($requirements_pos) ? null : array_keys($requirements_pos);
-            }
+            $copy_req[$reqspec_pos] = is_null($requirements_pos) ? null : array_keys($requirements_pos);
         }
+      }
     }
-   
+    
     $loop2do = count($items);
     $container_id[0] = (is_null($parent_id) || $parent_id == 0) ? $tproject_id : $parent_id;
-
-	// items is an array of req. specs
-	$skip_level = -1;
+    
+    // items is an array of req. specs
+    $skip_level = -1;
     for($idx = 0;$idx < $loop2do; $idx++)
     {
-        $rspec = $items[$idx]['req_spec'];
-        $depth = $rspec['level'];
-        if( $skip_level > 0 && $depth >= $skip_level)
-        {
-        	$msgID = 'import_req_spec_ancestor_skipped';
-        	$user_feedback[] = array('doc_id' => $rspec['doc_id'],'title' => $rspec['title'],
-        							 'import_status' => sprintf($labels[$msgID],$rspec['doc_id']));
-        	continue;
-        }
-        
-        $req_spec_order = isset($rspec['node_order']) ? $rspec['node_order'] : 0;
-		
-		// 20100320 - 
-		// Check if req spec with same DOCID exists, inside container_id
-		// If there is a hit
-		//	  We will go in update 
-		// If Check fails, need to repeat check on WHOLE Testproject.
-		// If now there is a HIT we can not import this branch
-		// If Check fails => we can import creating a new one.
-		//
-		// Important thing:
-		// Working in this way, i.e. doing check while walking the structure to import
-		// we can end importing struct with 'holes'.
-		//
- 		$check_in_container = $this->getByDocID($rspec['doc_id'],$tproject_id,$container_id[$depth],$getOptions);
-		$skip_level = $depth + 1;
-		$result['status_ok'] = 0;
-   		$msgID = 'import_req_spec_skipped';
-		
-     	if(is_null($check_in_container))
-		{
-			$check_in_tproject = $this->getByDocID($rspec['doc_id'],$tproject_id,null,$getOptions);
-			if(is_null($check_in_tproject))
-			{
-        		$msgID = 'import_req_spec_created';
-        		$result = $this->create($tproject_id,$container_id[$depth],$rspec['doc_id'],$rspec['title'],
-            		                    $rspec['scope'],$rspec['total_req'],$author_id,$rspec['type'],$req_spec_order);
-        	}
-        }
-        else
-        {
-        	$msgID = 'import_req_spec_updated';
-		    $reqSpecID = key($check_in_container);
-			$result = $this->update($reqSpecID,$rspec['doc_id'],$rspec['title'],$rspec['scope'],
-									$rspec['total_req'],$author_id,$rspec['type'],$req_spec_order);
-       		$result['id'] = $reqSpecID;
-        }
+      $rspec = $items[$idx]['req_spec'];
+      $depth = $rspec['level'];
+      if( $skip_level > 0 && $depth >= $skip_level)
+      {
+        $msgID = 'import_req_spec_ancestor_skipped';
         $user_feedback[] = array('doc_id' => $rspec['doc_id'],'title' => $rspec['title'],
                                  'import_status' => sprintf($labels[$msgID],$rspec['doc_id']));
+        continue;
+      }
+      $req_spec_order = isset($rspec['node_order']) ? $rspec['node_order'] : 0;
+      
+      // Check if req spec with same DOCID exists, inside container_id
+      // If there is a hit
+      //    We will go in update 
+      // If Check fails, need to repeat check on WHOLE Testproject.
+      // If now there is a HIT we can not import this branch
+      // If Check fails => we can import creating a new one.
+      //
+      // Important thing:
+      // Working in this way, i.e. doing check while walking the structure to import
+      // we can end importing struct with 'holes'.
+      //
+      $check_in_container = $this->getByDocID($rspec['doc_id'],$tproject_id,$container_id[$depth],$getOptions);
+      $hasAttachments = array_key_exists('attachments',$rspec);
 
-
-        // 20100908 - Custom Fields
-        if( $result['status_ok'] && $doProcessCF && 
-        	isset($rspec['custom_fields']) && !is_null($rspec['custom_fields']) )
-        {	
-    			$cf2insert = null;
-    			foreach($rspec['custom_fields'] as $cfname => $cfvalue)
-    			{
-    				$cfname = trim($cfname);
-    		   		if( isset($linkedCF[$cfname]) )
-    		   		{
-    		       		$cf2insert[$linkedCF[$cfname]['id']]=array('type_id' => $linkedCF[$cfname]['type'],
-    		                                                        'cf_value' => $cfvalue);         
-    		   		}
-    		   		else
-    		   		{
-    		       		if( !isset($missingCfMsg[$cfname]) )
-    		       		{
-    		           		$missingCfMsg[$cfname] = sprintf($messages['cfield'],$cfname,$labels['requirement']);
-    		       		}
-    					$user_feedback[] = array('doc_id' => $rspec['docid'],'title' => $rspec['title'], 
-    						 	                 'import_status' => $missingCfMsg[$cfname]);
-    		   		}
-    			}  
- 				if( !is_null($cf2insert) )
- 				{
-    				$this->cfield_mgr->design_values_to_db($cf2insert,$result['id'],null,'simple');
-    			}	
-		}
-        
-        
-        if($result['status_ok'])
+      $skip_level = $depth + 1;
+      $result['status_ok'] = 0;
+      $msgID = 'import_req_spec_skipped';
+      
+      if(is_null($check_in_container))
+      {
+        $check_in_tproject = $this->getByDocID($rspec['doc_id'],$tproject_id,null,$getOptions);
+        if(is_null($check_in_tproject))
         {
-        	$skip_level = -1;
-            $container_id[$depth+1] = ($reqSpecID = $result['id']); 
-            $reqSet = $items[$idx]['requirements'];
-            $create_req = (!$has_filters || isset($copy_req[$idx])) && !is_null($reqSet);
-            if($create_req)
+		  $importMode = 'creation';
+          $msgID = 'import_req_spec_created';
+          $result = $this->create($tproject_id,$container_id[$depth],$rspec['doc_id'],$rspec['title'],
+                                  $rspec['scope'],$rspec['total_req'],$author_id,$rspec['type'],$req_spec_order);
+        }
+      }
+      else
+      {
+		$importMode = 'update';
+        $msgID = 'import_req_spec_updated';
+        $reqSpecID = key($check_in_container);
+        $item = array('id' => $reqSpecID, 'name' => $rspec['title'],'doc_id' => $rspec['doc_id'], 
+                      'scope' => $rspec['scope'],'total_req' => $rspec['total_req'],'modifier_id' => $author_id, 
+                      'type' => $rspec['type'],'node_order' => $req_spec_order); 
+
+        // ATTENTION update return key => revision_id, because CF values are saved at REVISION LEVEL
+        $result = $this->update($item);
+        $result['id'] = $reqSpecID;
+      }
+      $user_feedback[] = array('doc_id' => $rspec['doc_id'],'title' => $rspec['title'],
+                               'import_status' => sprintf($labels[$msgID],$rspec['doc_id']));
+	  
+	  // process attachements for creation and update
+	  if($result['status_ok'] && $hasAttachments)
+	  {
+		$addAttachmentsResponse = $this->processAttachments( $importMode, $result['id'], $rspec['attachments'], $feedbackMsg );
+	  }
+	  // display only problems during attachments import
+	  if( isset($addAttachmentsResponse) && !is_null($addAttachmentsResponse) )
+	  {
+		foreach($addAttachmentsResponse as $att_name){
+			$user_feedback[] = array('doc_id' => $rspec['doc_id'],'title' => $rspec['title'],
+								   'import_status' => sprintf(lang_get('import_req_spec_attachment_skipped'),$att_name));
+		}
+	  }
+      if( $result['status_ok'] && $doProcessCF && isset($rspec['custom_fields']) && !is_null($rspec['custom_fields']) )
+      {
+        $cf2insert = null;
+        foreach($rspec['custom_fields'] as $cfname => $cfvalue)
+        {
+          $cfname = trim($cfname);
+          if( isset($linkedCF[$cfname]) )
+          {
+            $cf2insert[$linkedCF[$cfname]['id']]=array('type_id' => $linkedCF[$cfname]['type'],'cf_value' => $cfvalue);
+          }
+          else
+          {
+            if( !isset($missingCfMsg[$cfname]) )
             {
-    			if(is_null($req_mgr))
-    			{
-    				$req_mgr =  new requirement_mgr($this->db);
-    			}
-                
-                $items_qty = isset($copy_req[$idx]) ? count($copy_req[$idx]) : count($reqSet);
-                $keys2insert = isset($copy_req[$idx]) ? $copy_req[$idx] : array_keys($reqSet);
-                for($jdx = 0;$jdx < $items_qty; $jdx++)
-                {
-                    $req = $reqSet[$keys2insert[$jdx]];
-                    $dummy = $req_mgr->createFromMap($req,$tproject_id,$reqSpecID,$author_id,
-                    								 null,$my['options']);
-					$user_feedback = array_merge($user_feedback,$dummy);
-                } 
-            }  // if($create_req)   
-        } // if($result['status_ok'])
+              $missingCfMsg[$cfname] = sprintf($messages['cfield'],$cfname,$labels['requirement']);
+            }
+            $user_feedback[] = array('doc_id' => $rspec['docid'],'title' => $rspec['title'], 
+                                     'import_status' => $missingCfMsg[$cfname]);
+          }
+        }  
+        if( !is_null($cf2insert) )
+        {
+          $this->cfield_mgr->design_values_to_db($cf2insert,$result['revision_id'],null,'simple');
+        }
+      }
+          
+          
+      if($result['status_ok'])
+      {
+        $skip_level = -1;
+        $container_id[$depth+1] = ($reqSpecID = $result['id']); 
+        $reqSet = $items[$idx]['requirements'];
+        $create_req = (!$has_filters || isset($copy_req[$idx])) && !is_null($reqSet);
+        if($create_req)
+        {
+          $items_qty = isset($copy_req[$idx]) ? count($copy_req[$idx]) : count($reqSet);
+          $keys2insert = isset($copy_req[$idx]) ? $copy_req[$idx] : array_keys($reqSet);
+          for($jdx = 0;$jdx < $items_qty; $jdx++)
+          {
+            $req = $reqSet[$keys2insert[$jdx]];
+            $dummy = $this->req_mgr->createFromMap($req,$tproject_id,$reqSpecID,$author_id, null,$my['options']);
+            $user_feedback = array_merge($user_feedback,$dummy);
+          } 
+        }  // if($create_req)   
+
+        if(isset($items[$idx]['relations']))
+        {  
+          $relationsMap = $items[$idx]['relations'];
+          $numberOfRelations = count($relationsMap);
+          for($jdx=0; $jdx < $numberOfRelations; $jdx++)
+          {
+            $rel = $relationsMap[$jdx];
+            $dummy = $this->req_mgr->createRelationFromMap($rel, $tproject_id, $author_id);
+            $user_feedback = array_merge($user_feedback,$dummy); 
+          }
+        } 
+      } // if($result['status_ok'])
     }    
     return $user_feedback;
-}
+  }
 
 
 
@@ -1548,60 +1749,86 @@ function createFromXML($xml,$tproject_id,$parent_id,$author_id,$filters = null,$
                     creation_ts
                     modifier_id
                     modification_ts
+                    
   */
-function getByDocID($doc_id,$tproject_id=null,$parent_id=null,$options=null)
-{
-	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-	$my['options'] = array( 'check_criteria' => '=', 'access_key' => 'id', 
-							'case' => 'sensitive', 'output' => 'standard');
-	$my['options'] = array_merge($my['options'], (array)$options);
+  function getByDocID($doc_id,$tproject_id=null,$parent_id=null,$options=null)
+  {
+  	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+  	$my['options'] = array( 'check_criteria' => '=', 'access_key' => 'id', 
+  							'case' => 'sensitive', 'output' => 'standard');
+  	$my['options'] = array_merge($my['options'], (array)$options);
 
-    
-  	$output=null;
+      
+    $output=null;
     $the_doc_id=$this->db->prepare_string(trim($doc_id));
 
-	switch($my['options']['check_criteria'])
-	{
-		case '=':
-		default:
-			$check_criteria = " = '{$the_doc_id}' ";
-		break;
-		
-		case 'like':
-			$check_criteria = " LIKE '{$the_doc_id}%' ";
-		break;
-	}
-	$sql = " /* $debugMsg */ SELECT ";
-	switch($my['options']['output'])
-	{
-		case 'standard':
-  			 $sql .= " RSPEC.id,testproject_id,RSPEC.doc_id,RSPEC.scope,RSPEC.total_req,RSPEC.type," .
-           			 " RSPEC.author_id,RSPEC.creation_ts,RSPEC.modifier_id," .
-           			 " RSPEC.modification_ts,NH.name AS title ";
-        break;
-           			 
-		case 'minimun':
-  			 $sql .= " RSPEC.id,testproject_id,RSPEC.doc_id,NH.name AS title ";
-        break;
-		
-	}
+  	switch($my['options']['check_criteria']) {
+  		case '=':
+  		default:
+  			$check_criteria = " = '{$the_doc_id}' ";
+  		break;
+  		
+  		case 'like':
+  			$check_criteria = " LIKE '{$the_doc_id}%' ";
+  		break;
+  	}
 
-	$sql .= " FROM {$this->object_table} RSPEC, {$this->tables['nodes_hierarchy']} NH " .
- 		    " WHERE RSPEC.doc_id {$check_criteria} ";
-
-  	if( !is_null($tproject_id) )
-  	{
-  	  $sql .= " AND RSPEC.testproject_id={$tproject_id}";
+  	$where = " WHERE RSPEC.doc_id {$check_criteria} ";
+    if( !is_null($tproject_id) )
+    {
+  		$where  .= " AND RSPEC.testproject_id={$tproject_id}";
+    }
+    if( !is_null($parent_id) )
+    {
+  		$where  .= " AND NH_RSPEC.parent_id={$parent_id}";
     }
 
-  	if( !is_null($parent_id) )
-  	{
-  	  $sql .= " AND NH.parent_id={$parent_id}";
-    }
+  	// Developer Note:
+  	// a mix of SQL ignorance and MySQL relaxed SQL on GROUP BY
+  	// Fortunatelly Postgres do the right job
+  	//
+  	//
+  	// First step get MAX revision
+  	// will trust in this that max(revision) has also always max(revision_id)
+  	// ( but really can be on a differente way ? ), in order to use a simple logic.
+  	//
+  	$sql_max =	" /* $debugMsg */ SELECT MAX(RSPEC_REV.id) AS rev_id" .
+        				" FROM {$this->tables['req_specs']} RSPEC " .
+        				" JOIN {$this->tables['req_specs_revisions']} RSPEC_REV " .
+        				" ON RSPEC_REV.parent_id = RSPEC.id " .
+        				" JOIN {$this->tables['nodes_hierarchy']} NH_RSPEC " .
+        				" ON NH_RSPEC.id = RSPEC.id " .
+        				$where . ' GROUP BY RSPEC_REV.parent_id ';
 
-    $sql .= " AND RSPEC.id=NH.id ";
-	$output = $this->db->fetchRowsIntoMap($sql,$my['options']['access_key']);
-  	return $output;
+  	$maxi = (array)$this->db->fetchRowsIntoMap($sql_max,'rev_id');;
+  	if( count($maxi) > 0)
+  	{
+      $sql =	" /* $debugMsg */ SELECT RSPEC.id,RSPEC.testproject_id,RSPEC.doc_id,NH_RSPEC.name AS title, " .
+  				" RSPEC_REV.revision ";
+  	
+  		switch($my['options']['output'])
+  		{
+  			case 'standard':
+  	  	  $sql .= " ,RSPEC_REV.total_req, RSPEC_REV.scope,RSPEC_REV.type," .
+  	           		" RSPEC_REV.author_id,RSPEC_REV.creation_ts, " .
+  	           		" RSPEC_REV.modifier_id,RSPEC_REV.modification_ts";
+        break;
+  	           			 
+  			case 'minimun':
+        break;
+  		}
+  	
+  		$sql .=	" FROM {$this->tables['req_specs']} RSPEC " .
+  				    " JOIN {$this->tables['req_specs_revisions']} RSPEC_REV " .
+  				    " ON RSPEC_REV.parent_id = RSPEC.id " .
+      				" JOIN {$this->tables['nodes_hierarchy']} NH_RSPEC " .
+      				" ON NH_RSPEC.id = RSPEC.id ";
+  				
+  		$sql .= $where . ' AND RSPEC_REV.id IN (' . implode(",",array_keys($maxi)) . ') '; 
+  		$output = $this->db->fetchRowsIntoMap($sql,$my['options']['access_key']);
+    }
+    	
+    return $output;
   }
 
 
@@ -1622,68 +1849,104 @@ function getByDocID($doc_id,$tproject_id=null,$parent_id=null,$options=null)
 	
 	  rev :
 	*/
-	function copy_to($id, $parent_id, $tproject_id, $user_id,$options = null)
-	{
+	function copy_to($id, $parent_id, $tproject_id, $user_id,$options = null) {
+		
+	  static $get_tree_nt2exclude;
+		if(!$get_tree_nt2exclude) {
+			$get_tree_nt2exclude = 
+        array('req_version' => 'exclude_me','req_revision' => 'exclude_me',
+							'requirement_spec_revision' => 'exclude_me');
+		}
+		
 		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
 
 		$op = array('status_ok' => 1, 'msg' => 'ok', 'id' => -1 , 'mappings' => null);
 		$my['options'] = array('copy_also' => null);
 		$my['options'] = array_merge($my['options'], (array)$options);
+		
 
-
-		$field_size = config_get('field_size');
 		$item_info = $this->get_by_id($id);
-        $target_doc = $this->generateDocID($id,$tproject_id);		
+    $target_doc = $this->generateDocID($id,$tproject_id);		
 		$new_item = $this->create($tproject_id,$parent_id,$target_doc,$item_info['title'],
 		                          $item_info['scope'],$item_info['total_req'],
 		                          $item_info['author_id'],$item_info['type'],$item_info['node_order']);
 	
-	    $op = $new_item;
-	    if( $new_item['status_ok'] )
-	    {
-	    	$op['mappings'][$id] = $new_item['id'];
+	  $op = $new_item;
+	  if( $new_item['status_ok'] ) {
+	   	$op['mappings'][$id] = $new_item['id'];
+	  	$op['mappings']['req_spec'] = array();
+	   	$op['mappings']['req'] = array();
+	   	$op['mappings']['req_version'] = array();
+      $op['mappings']['req_tree'] = array();
+
 	    		
-			$this->copy_cfields($id,$new_item['id']);
-        	
-        	// Now loop to copy all items inside it    	
- 			$my['filters'] = null;
-			$subtree = $this->tree_mgr->get_subtree($id,$my['filters']);
-			if (!is_null($subtree))
-			{
-				$reqMgr =  new requirement_mgr($this->db);
-				$parent_decode=array();
-			  	$parent_decode[$id]=$new_item['id'];
-				foreach($subtree as $the_key => $elem)
-				{
-					// 20100311 - franciscom
-				  	$the_parent_id=isset($parent_decode[$elem['parent_id']]) ? $parent_decode[$elem['parent_id']] : null;
-					switch ($elem['node_type_id'])
-					{
-						case $this->node_types_descr_id['requirement']:
-							$ret = $reqMgr->copy_to($elem['id'],$the_parent_id,$user_id,
-							                              $tproject_id,$my['options']['copy_also']);
-							$op['status_ok'] = $ret['status_ok'];    
-							$op['mappings'] += $ret['mappings'];
+		  $idCard = array('parent_id' => $id, 'tproject_id' => $tproject_id); 
+      $this->copy_cfields($idCard,$new_item['id']);
+      
+      $this->copy_attachments($id,$new_item['id']);
+
+      // Now loop to copy all items inside it    	
+ 			// null is OK, because $id is a req spec, there is no risk
+ 			// to copy/traverse wrong node types.
+ 			// Hmmm may be req_revi ???
+ 			$my['filters']['exclude_node_types'] = $get_tree_nt2exclude;
+			$subtree = $this->tree_mgr->get_subtree($id,$my['filters'],array('output' => 'essential'));
+		
+			if (!is_null($subtree)) {
+			  $reqMgr =  new requirement_mgr($this->db);
+			  $parent_decode=array();
+			 	$parent_decode[$id]=$new_item['id'];
+			  	
+  			// using reference has to avoid duplicate => memory consumption
+  			// (at least this is info found on Internet)
+  			// Few test indicates that it's true, but that using a counter
+  			// is still better.
+  			//
+			  $loop2do = count($subtree);
+  			for($sdx=0; $sdx <= $loop2do; $sdx++) {
+		  		$elem = &$subtree[$sdx];
+				  $the_parent_id = isset($parent_decode[$elem['parent_id']]) ? $parent_decode[$elem['parent_id']] : null;
+
+			   	switch ($elem['node_type_id']) {
+					  case $this->node_types_descr_id['requirement']:
+  						$ret = $reqMgr->copy_to($elem['id'],$the_parent_id,$user_id,
+                        $tproject_id,$my['options']);
+
+  						$op['status_ok'] = $ret['status_ok'];
+  						$op['mappings']['req'] += $ret['mappings']['req'];
+  						$op['mappings']['req_version'] += $ret['mappings']['req_version'];
+              $op['mappings']['req_tree'] += $ret['mappings']['req_tree'];
 							break;
 							
-						case $this->node_types_descr_id['requirement_spec']:
-							$item_info = $this->get_by_id($elem['id']);
-        	                $target_doc = $this->generateDocID($elem['id'],$tproject_id);		
-							$ret = $this->create($tproject_id,$the_parent_id,$target_doc,$item_info['title'],
-			                                     $item_info['scope'],$item_info['total_req'],
-			                                     $item_info['author_id'],$item_info['type'],$item_info['node_order']);
+	   					case $this->node_types_descr_id['requirement_spec']:
+  							$item_info = $this->get_by_id($elem['id']);
+        	                
+                // hmm, when copy_to() is called because we are duplicating
+                // a test project, call to generateDocID(), can be avoided.
+                // we have IMHO an absolute inexistent risk.
+                $target_doc = $this->generateDocID($elem['id'],$tproject_id);		
+							
+		  					$ret = $this->create($tproject_id,$the_parent_id,$target_doc,
+                                     $item_info['title'],
+			                               $item_info['scope'],$item_info['total_req'],
+			                               $item_info['author_id'],$item_info['type'],
+                                     $item_info['node_order']);
 
 					    	$parent_decode[$elem['id']]=$ret['id'];
-				      		$op['mappings'][$elem['id']] = $ret['id'];
+			      		$op['mappings']['req_spec'][$elem['id']] = $ret['id'];
 
-				      		if( ($op['status_ok'] = $ret['status_ok']) )
-				      		{
-				      			$this->copy_cfields($elem['id'],$ret['id']);
-							}
+				      	if( ($op['status_ok'] = $ret['status_ok']) ) {
+				      	  // try to reduce memory usage
+				      		// $idCard = array('parent_id' => $elem['id'], 
+                  //                 'tproject_id' => $tproject_id);
+				      		$this->copy_cfields(array('parent_id' => $elem['id'], 
+                                              'tproject_id' => $tproject_id),
+				      								                 $ret['id']);
+							  }
 							break;
 					}
-					if( $op['status_ok'] == 0 )
-					{
+
+					if( $op['status_ok'] == 0 ) {
 						break;
 					}
 				}
@@ -1695,39 +1958,83 @@ function getByDocID($doc_id,$tproject_id=null,$parent_id=null,$options=null)
 
 	/*
 	  function: copy_cfields
-	            Get all cfields linked to any testcase of this testproject
-	            with the values presents for $from_id, testcase we are using as
-	            source for our copy.
+	            Get all cfields linked to item with the values presents for $from_id, 
+	            item we are using as source for our copy.
 	
-	  args: from_id: source item id
-	        to_id: target item id
+	  args: from_identity: source credentianls (complex type)
+	  						array('parent_id' => , 'item_id' => , 'tproject_id' => );	
+
+	        to_id: target item id (simple type)
 	
 	  returns: -
 	
 	*/
-	function copy_cfields($from_id,$to_id)
-	{
-  		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-	  	$cfmap_from=$this->get_linked_cfields($from_id);
-	  	$cfield=null;
-	  	if( !is_null($cfmap_from) )
-	  	{
-	  	  foreach($cfmap_from as $key => $value)
-	  	  {
-	  	    $cfield[$key]=array("type_id"  => $value['type'], "cf_value" => $value['value']);
-	  	  }
+	function copy_cfields($from_identity,$to_id) {
+  	$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+		$cfmap_from=$this->get_linked_cfields($from_identity);
+
+	  $cfield=null;
+	  if( !is_null($cfmap_from) ) {
+	  	foreach($cfmap_from as $key => $value) {
+	  	  $cfield[$key]=array("type_id"  => $value['type'], 
+                            "cf_value" => $value['value']);
 	  	}
-	  	$this->cfield_mgr->design_values_to_db($cfield,$to_id,null,'tcase_copy_cfields');
+	  }
+	  $this->cfield_mgr->design_values_to_db($cfield,$to_id,null,'tcase_copy_cfields');
+	}	
+	
+	
+
+	/**
+	 * processAttachments
+	 *
+	 * Analyze attachments info related to req spec to define if the the attachment has to be added.
+	 * attachments are ignored only if a attachment with the same ID is already linked to the target ReqSpec.
+	 * 
+	 * return an array of all attachments names of IDs already linked to target ReqSpec.
+	 * 
+	 */
+
+	function processAttachments($importMode, $rs_id, $attachments, $feedbackMsg )
+	{
+		$tables = tlObjectWithDB::getDBTables(array('req_specs','attachments'));
+
+		$knownAttachments = array();
+		foreach( $attachments as $attachment )
+		{
+			$addAttachment = true;
+			if($importMode == 'update'){
+				// try to bypass the importation of already known attachments.
+				// Check in database if the attachment with the same ID is linked to the rspec with the same internal ID
+				// The couple attachment ID + InternalID is used as a kind of signature to avoid duplicates. 
+				// If signature is not precise enough, could add the use of attachment timestamp (date_added in XML file).
+				$sql = " SELECT ATT.id from {$tables['attachments']} ATT " .
+					" WHERE ATT.id='{$this->db->prepare_string($attachment[id])}' " .
+					" AND ATT.fk_id={$rs_id} ";
+				$rsx=$this->db->get_recordset($sql);
+				$addAttachment = ( is_null($rsx) || count($rsx) < 1 );
+				if( $addAttachment === false ){ // inform user that the attachment has been skipped
+					$knownAttachments[] = $attachment['name'];
+				}
+			}
+			if($addAttachment){
+				$attachRepo = tlAttachmentRepository::create($this->db);				
+				$fileInfo = $attachRepo->createAttachmentTempFile( $attachment['content'] );	
+				$fileInfo['name'] = $attachment['name'];
+				$fileInfo['type'] = $attachment['file_type'];
+				$attachRepo->insertAttachment( $rs_id, $tables['req_specs'], $attachment['title'], $fileInfo);
+			}
+		}
+		return $knownAttachments;
 	}
 
 
-    /**
+  /**
 	 * 
  	 * 
  	 */
 	function generateDocID($id, $tproject_id)
 	{
-		$field_size = config_get('field_size');
 		$item_info = $this->get_by_id($id);
 
 		// Check if another req with same DOC ID exists on target container,
@@ -1738,19 +2045,21 @@ function getByDocID($doc_id,$tproject_id=null,$parent_id=null,$options=null)
 		$instance = 1;
 		if( !is_null($itemSet) )
 		{
-			// doc_id has limited size => we need to be sure that generated id will not exceed DB size
-            $nameSet = array_flip(array_keys($itemSet));
-	        // 6 magic from " [xxx]"
-	        $prefix = trim_and_limit($item_info['doc_id'],$field_size->docid-6);
-            $target_doc = $prefix . " [{$instance}]"; 
-        	while( isset($nameSet[$target_doc]) )
-        	{
-        		$instance++;
-            	$target_doc = $prefix . " [{$instance}]"; 
-        	}
+			// doc_id has limited size => we need to be sure that generated id 
+      // will not exceed DB size
+      $nameSet = array_flip(array_keys($itemSet));
+	    
+      // 6 magic from " [xxx]"
+	    $prefix = trim_and_limit($item_info['doc_id'],$this->field_size->docid-6);
+      $target_doc = $prefix . " [{$instance}]"; 
+      while( isset($nameSet[$target_doc]) )
+      {
+        $instance++;
+        $target_doc = $prefix . " [{$instance}]"; 
+      }
 		}
-     	return $target_doc;
-     }
+    return $target_doc;
+  }
 
 	/**
 	 * 
@@ -1759,7 +2068,7 @@ function getByDocID($doc_id,$tproject_id=null,$parent_id=null,$options=null)
 	function getFirstLevelInTestProject($tproject_id)
 	{
 		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
-	  	$sql = "/* $debugMsg */ SELECT * from {$this->tables['nodes_hierarchy']} " .
+	  $sql = "/* $debugMsg */ SELECT * from {$this->tables['nodes_hierarchy']} " .
 	  	       " WHERE parent_id = {$tproject_id} " .
 	  	       " AND node_type_id = {$this->node_types_descr_id['requirement_spec']} " .
 	  	       " ORDER BY node_order,id";
@@ -1768,5 +2077,776 @@ function getByDocID($doc_id,$tproject_id=null,$parent_id=null,$options=null)
 	}
 
 
+	/**
+	 * IMPORTANT NOTICE
+	 * Only information regarding basic tables is created.
+	 * This means THAT NOTHING is done (example) on custom fields, or other
+	 * items that are related/linked to revisions.
+ 	 *
+ 	 */
+	function create_revision($rspecID,$item)
+	{
+		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+		$ret = array('msg' => 'ok','status_ok' => 1,'id' => -1);
+	  	$ret['id'] = $this->tree_mgr->new_node($rspecID,$this->node_types_descr_id['requirement_spec_revision']);
+		
+		$optActorPairs = array('author_id' => 'creation_ts', 'modifier_id' => 'modification_ts');
+		$val2add = '';
+		$fields2insert = 'parent_id,id,revision,status,doc_id,name,scope,type,log_message';
+
+		
+		foreach($optActorPairs as $main => $sec)
+		{
+			if( isset($item[$main]) && is_numeric($item[$main]) )
+			{
+				$fields2insert .= ',' . $main . ',' . $sec;
+				$ts = isset($item[$sec]) ? $item[$sec] : $this->db->db_now();
+				$val2add .= ',' . intval($item[$main]) . ',' . $ts;
+			}
+		}
+		$optIntKeys = array('status' => 1);
+		foreach($optIntKeys as $field => $default)
+		{
+			$item[$field] = isset($item[$field]) ? $item[$field] : $default; 
+		}
+
+		$sql = "/* $debugMsg */ INSERT INTO {$this->tables['req_specs_revisions']} " .
+		       " ($fields2insert) " . 
+	  	       " VALUES({$rspecID}" . "," . $ret['id'] . "," . intval($item['revision']) . "," .
+	  	       intval($item['status']) . ",'" . 
+	  	       $this->db->prepare_string($item['doc_id']) . "','" . 
+	  	       $this->db->prepare_string($item['name']) . "','" . 
+	  	       $this->db->prepare_string($item['scope']) . "','" . 
+	  	       $this->db->prepare_string($item['type']) . "','" . 
+	  	       $this->db->prepare_string($item['log_message']) . "'" . $val2add . ")";
+	  	// echo $sql . '<br>'; die();   		
+
+		$result = $this->db->exec_query($sql);
+		if ($result)
+		{
+			$sql = 	"/* $debugMsg */ UPDATE {$this->tables['nodes_hierarchy']} " .
+					" SET name='" . $this->db->prepare_string($item['name']) . "' " .
+	  	       		" WHERE id={$ret['id']} ";
+	  	    // echo $sql . '<br>';   		
+			$this->db->exec_query($sql);
+		}
+		else 
+		{	
+			$ret['msg'] = $this->db->error_msg();
+		  	$ret['status_ok'] = 0;
+		  	$ret['id'] = -1;
+		}
+ 		  	
+	  	return $ret;
+	}
+
+
+  /**
+   *
+   */
+	function create_new_revision($rspecID,$item)
+	{
+		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+		$ret = array('msg' => 'ok','status_ok' => 1,'id' => -1);
+
+	  // Needed to get higher revision NUMBER, to generata new NUMBER      
+	  $source_info =  $this->get_last_child_info($rspecID);
+	  $current_rev = 0;
+	  if( !is_null($source_info) )
+	  {
+	  	$current_rev = $source_info['revision']; 
+	  }
+	  $current_rev++;
+		$item['revision'] = $current_rev++;
+		
+		$ret = $this->create_revision($rspecID,$item);
+		return $ret;
+	}
+
+	/**
+	 *	@param id: parent id
+ 	 *	@param child_type: 'revision'
+ 	 *
+ 	 *	@return  
+   */
+	function get_last_child_info($id, $options=null)
+	{
+		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+
+		$my['options'] = array('child_type' => 'revision', 'output' => 'full');
+		$my['options'] = array_merge($my['options'], (array)$options);
+		 
+		$info = null;
+		$target_cfg = array('revision' => array('table'=> 'req_specs_revisions', 'field' => 'revision'));
+
+		$child_type = $my['options']['child_type'];  // just for readability 
+		$table = $target_cfg[$child_type]['table'];
+		$field = $target_cfg[$child_type]['field'];
+		
+		$sql = " /* $debugMsg */ SELECT COALESCE(MAX($field),-1) AS $field " .
+		       " FROM {$this->tables[$table]} CHILD," .
+		       " {$this->tables['nodes_hierarchy']} NH WHERE ".
+		       " NH.id = CHILD.id ".
+		       " AND NH.parent_id = {$id} ";
+
+		$max_verbose = $this->db->fetchFirstRowSingleColumn($sql,$field);
+		if ($max_verbose >= 0)
+		{
+			$sql = "/* $debugMsg */ SELECT ";
+
+			switch($my['options']['output'])
+			{
+				case 'credentials':
+					$sql .= " CHILD.parent_id,CHILD.id,CHILD.revision,CHILD.doc_id ";
+				break;
+				
+				case 'full':
+				default:
+					$sql .= " CHILD.* ";
+				break;
+			}
+		
+			$sql .= " FROM {$this->tables[$table]} CHILD," .
+			        " {$this->tables['nodes_hierarchy']} NH ".
+			        " WHERE $field = {$max_verbose} AND NH.id = CHILD.id AND NH.parent_id = {$id}";
+	
+			$info = $this->db->fetchFirstRow($sql);
+		}
+		return $info;
+	}
+
+	/**
+	 *	@param id: parent id
+ 	 *	@param child_type: 'revision'
+ 	 *
+ 	 *	@return  
+     */
+	function getRevisionsCount($id)
+	{
+		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+		$qty = 0;
+
+		$sql = 	" /* $debugMsg */ SELECT COUNT(0) AS qty" .
+				" FROM {$this->tables['req_specs_revisions']} RSPEC_REV" .
+				" WHERE RSPEC_REV.parent_id = {$id} ";
+		
+		$dummy = $this->db->get_recordset($sql);
+		return $dummy[0]['qty'];
+	}
+	
+
+	/**
+	 * used to create overwiew of changes between revisions
+ 	 */
+	function get_history($id,$options=null)
+	{
+		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+		$my['options'] = array('output' => "map", 'decode_user' => false, 'order_by_dir' => 'DESC');
+    $my['options'] = array_merge($my['options'], (array)$options);
+
+		$labels['undefined'] = lang_get('undefined');
+		$sql = "/* $debugMsg */" .
+    			 " SELECT RSREV.id AS revision_id, RSREV.revision," .
+    			 "		 RSREV.creation_ts, RSREV.author_id, " .
+				   "		 RSREV.modification_ts, RSREV.modifier_id, " . 
+    			 " 		 RSREV.revision, RSREV.scope, " .
+    			 " 		 RSREV.status,RSREV.type,RSREV.name, RSREV.doc_id, " .
+    			 " COALESCE(RSREV.log_message,'') AS log_message" .
+    			 " FROM {$this->tables['req_specs_revisions']}  RSREV " .
+				   " WHERE RSREV.parent_id = {$id} " .
+				   " ORDER BY RSREV.revision {$my['options']['order_by_dir']} ";
+				
+		
+		switch($my['options']['output'])
+		{
+			case 'map':
+    			$rs = $this->db->fetchRowsIntoMap($sql,'revision_id');
+			break;
+			
+			case 'array':
+				$rs = $this->db->get_recordset($sql);
+			break;
+		}
+  		
+  	if( !is_null($rs) )
+  	{
+  		$key2loop = array_keys($rs);
+  		foreach($key2loop as $ap)
+  		{
+  			$rs[$ap]['item_id'] = $rs[$ap]['revision_id'];
+  				
+  			// IMPORTANT NOTICE
+  			// each DBMS uses a different (unfortunatelly) way to signal NULL DATE
+  			//
+  			// We need to Check with ALL DB types
+				// MySQL    NULL DATE -> "0000-00-00 00:00:00" 
+				// Postgres NULL DATE -> NULL
+				// MSSQL    NULL DATE - ???
+				$key4date = 'creation_ts';
+				$key4user = 'author_id';
+				if( ($rs[$ap]['modification_ts'] != '0000-00-00 00:00:00') && !is_null($rs[$ap]['modification_ts']) )
+				{
+					$key4date = 'modification_ts';
+					$key4user = 'modifier_id';
+				}
+  			$rs[$ap]['timestamp'] = $rs[$ap][$key4date];
+  			$rs[$ap]['last_editor'] = $rs[$ap][$key4user];
+  			
+        // decode user_id for last_editor
+  				$user = tlUser::getByID($this->db,$rs[$ap]['last_editor']);
+  				$rs[$ap]['last_editor'] = $user ? $user->getDisplayName() : $labels['undefined'];
+  			}
+  		}
+  		
+  		$history = $rs;
+  		if( $my['options']['decode_user'] && !is_null($history) )
+  		{
+  			$this->decode_users($history);
+		  }
+ 
+    	return $history;
+	}
+
+	/**
+	 * 
+ 	 *
+ 	 */
+	function decode_users(&$rs)
+	{
+  	$userCache = null;  // key: user id, value: display name
+  	$key2loop = array_keys($rs);
+  	$labels['undefined'] = lang_get('undefined');
+  	$user_keys = array('author' => 'author_id', 'modifier' => 'modifier_id');
+  	foreach( $key2loop as $key )
+  	{
+  		foreach( $user_keys as $ukey => $userid_field)
+  		{
+  			$rs[$key][$ukey] = '';
+  			if(trim($rs[$key][$userid_field]) != "")
+  			{
+  				if( !isset($userCache[$rs[$key][$userid_field]]) )
+  				{
+  					$user = tlUser::getByID($this->db,$rs[$key][$userid_field]);
+  					$rs[$key][$ukey] = $user ? $user->getDisplayName() : $labels['undefined'];
+  					$userCache[$rs[$key][$userid_field]] = $rs[$key][$ukey];
+  				}
+  				else
+  				{
+  					$rs[$key][$ukey] = $userCache[$rs[$key][$userid_field]];
+  				}
+  			}
+  		}	
+  	}
+	}
+
+  /**
+   *
+   */
+	function getRevisionTemplate()
+	{
+		$tpl = array('revision' => 1, 'doc_id' => null, 'name' => null,
+					 'scope' => null, 'type' => null, 'status' => 1,
+					 'total_req' => 0, 'log_message' => '', 'author_id' => -1);
+		return $tpl;
+	}
+
+
+  /**
+   *
+   */
+	function clone_revision($rspecID,$item)
+	{
+		$fields2copy = "parent_id,id,revision,doc_id,name,scope,total_req,status,type,log_message";
+		
+		// Create a new revision node on db
+		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+		$ret = array('msg' => 'ok','status_ok' => 1,'id' => -1);
+	  $ret['id'] = $this->tree_mgr->new_node($rspecID,$this->node_types_descr_id['requirement_spec_revision']);
+
+		if( !isset($item['source_id']) || ($item['source_id'] < 0) )
+		{
+	  	$dummy = $this->get_last_child_info($rspecID);
+	  	$source_id = $dummy['id'];
+		}
+		else
+		{
+			$source_id = $item['source_id'];		
+		}
+		
+		// get data to clone
+		$sourceItem = $this->getRevisionByID($source_id);
+		$sourceItem['log_message'] = $item['log_message'];
+		$sourceItem['author_id'] = $item['author_id'];
+		$sourceItem['revision']++;
+
+		unset($sourceItem['modifier_id']);
+		unset($sourceItem['modification_ts']);
+		unset($sourceItem['creation_ts']);
+	
+		$ret = $this->create_revision($rspecID,$sourceItem);		
+		if( $ret['status_ok'] )
+		{
+  		$source = array('parent_id' => $rspecID, 'item_id' => $source_id, 
+  							'tproject_id' => $sourceItem['testproject_id']);
+  		$dest_id = $ret['id'];
+	    $this->copy_cfields($source,$ret['id']);
+		}
+
+		return $ret;
+  		
+	} 
+
+
+	/**
+	 * 
+ 	 *
+ 	 */
+	function getRevisionByID($id,$options=null)
+	{
+		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+		
+		$my['options'] = array('decode_user' => false);
+    $my['options'] = array_merge($my['options'], (array)$options);
+		
+		$sql = '/* $debugMsg */' .
+  				 " SELECT RSPEC_REV.*, RSPEC.testproject_id " .
+  				 " FROM {$this->tables['req_specs_revisions']} RSPEC_REV " .
+  				 " JOIN {$this->tables['req_specs']} RSPEC " .
+  				 " ON RSPEC.id = RSPEC_REV.parent_id " .
+  				 " WHERE RSPEC_REV.id={$id} ";
+				
+		$ret = $this->db->get_recordset($sql);
+		if( !is_null($ret) && $my['options']['decode_user'])
+		{
+			$this->decode_users($ret);
+		}
+		return (!is_null($ret) ? $ret[0] : null);		
+	}	
+
+
+	/**
+	 * 
+ 	 *
+ 	 */
+	function update_revision($item)
+	{
+		$debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+		if( !isset($item['revision_id']) || is_null($item['revision_id']) )
+		{
+			// will go to update LATEST
+			$info = $this->get_last_child_info($item['id'],array('output' => 'credentials'));       
+    	$targetID = $info['id'];
+		} 
+		else
+		{
+			$targetID = $item['revision_id'];
+		}
+		
+		$sql = '/* $debugMsg */' .
+				   " UPDATE {$this->tables['req_specs_revisions']} " .
+				   " SET scope = '" . $this->db->prepare_string($item['scope']) . "', " .
+				   "     modifier_id = " . $item['modifier_id'] . ", " .
+				   "     modification_ts = " . $this->db->db_now() . 	
+				   " WHERE id={$targetID} ";
+		$stat = $this->db->exec_query($sql);
+    return array('id' => $targetID);
+	}	
+
+
+  /**
+   *
+   */
+	function get_all_id_in_testproject($tproject_id,$options=null)
+	{
+	  $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $my['options'] = array('output' => 'classic');
+    $my['options'] = array_merge($my['options'], (array)$options);
+
+    $sql = "/* $debugMsg */ " . 
+		       " SELECT RSPEC.id FROM {$this->object_table} RSPEC WHERE testproject_id={$tproject_id}";
+
+    $rs = $this->db->get_recordset($sql);
+    switch($my['options']['output'])
+    {
+      case 'id':
+        $rx = array();
+        foreach($rs as $elem)
+        {
+          $rx[] = $elem['id'];
+        }  
+        return $rx;
+      break;
+
+      default:
+        return $rs;
+      break;      
+    }
+	}
+
+
+  /**
+   *
+   */
+  function getAssignedCoverage($id,$options=null)
+  {
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $my['options'] = array( 'order_by' => " ORDER BY NH_REQ.node_order,NH_REQ.name,REQ.req_doc_id", 
+                            'output' => 'standard');
+    $my['options'] = array_merge($my['options'], (array)$options);
+
+ 
+    $sql = "/* $debugMsg */ SELECT NH_REQ.id,U.login, REQ_COV.creation_ts " .
+           " FROM {$this->tables['nodes_hierarchy']} NH_REQ " .
+           " JOIN {$this->tables['req_coverage']} REQ_COV ON REQ_COV.req_id=NH_REQ.id " .
+           " LEFT OUTER JOIN {$this->tables['users']} U ON U.id = REQ_COV.author_id ";
+    $sql .= " WHERE NH_REQ.parent_id={$id} " .
+          " AND NH_REQ.node_type_id = {$this->node_types_descr_id['requirement']}";
+    $itemSet = $this->db->fetchRowsIntoMap($sql,'id');
+    return $itemSet;
+  }
+
+  /**
+   *
+   */
+  function simplexml_load_file_helper($filename)
+  {
+    // http://websec.io/2012/08/27/Preventing-XXE-in-PHP.html
+    libxml_disable_entity_loader(true);  
+    $zebra = file_get_contents($filename);
+    $xml = @simplexml_load_string($zebra);
+    return $xml;
+  }
+
+  /**
+   *
+   * @used-by 
+   */
+  function getFileUploadRelativeURL($id)
+  {
+    $url = "lib/requirements/reqSpecEdit.php?doAction=fileUpload&req_spec_id=" . intval($id);
+    return $url;
+  }
+
+  /**
+   *
+   * @used-by 
+   */
+  function getDeleteAttachmentRelativeURL($id)
+  {
+    $url = "lib/requirements/reqSpecEdit.php?doAction=deleteFile&req_spec_id=" . intval($id) . "&file_id=" ; 
+    return $url;
+  }
+
+  /** 
+   * Copy attachments from source to target
+   * 
+   **/
+  function copy_attachments($source_id,$target_id)
+  {
+    return $this->attachmentRepository->copyAttachments($source_id,$target_id,$this->attachmentTableName);
+  }
+
+
+  /**
+   *
+   *
+   *
+   */
+  function getReqsOnSpecForLatestTCV($id, $tcase_id=null, $options=null, $filters = null) {
+
+    static $tcMgr;
+
+    if( !$tcMgr ) {
+      $tcMgr = new testcase( $this->db );
+    }
+
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $my['options'] = 
+      array('order_by' => ' ORDER BY NH_REQ.node_order,NH_REQ.name,REQ.req_doc_id ', 
+            'output' => 'standard', 'outputLevel' => 'std', 'decodeUsers' => true,
+            'version_string' => lang_get('version_short'));
+    
+    $my['options'] = array_merge($my['options'], (array)$options);
+
+    // null => do not filter
+    $my['filters'] = array('link_status' => 1, 'type' => null);
+    $my['filters'] = array_merge($my['filters'], (array)$filters);
+
+
+    // 
+    $ltcv = null;
+    if( null == $tcase_id ) {
+      $tcversionJoin =  
+        " JOIN {$this->views['latest_tcase_version_id']} LTCV " .
+        " ON LTCV.tcversion_id = RCOV.tcversion_id ";
+    } else {
+      $tcInfo = current($tcMgr->get_last_active_version($tcase_id));
+      $ltcv = intval($tcInfo['tcversion_id']);            
+      $tcversionJoin = " AND RCOV.tcversion_id = " . $ltcv;
+    }
+
+
+    // Step 1 - 
+    // get all req inside the Req Spec Folder ONLY DIRECT CHILDREN
+    //
+    // Step 2 - 
+    // Need to get only the Req Versions That are Assigned 
+    // to Latest Active Test Case Version
+    // I'm doing this because I'm calling this function from 
+    // the Test Spec Tree and in this context I CAN NOT choose 
+    // test case version 
+    // 
+    $filters = '';
+    if( null != $my['filters']['link_status'] ) {
+      $nu = (array)$my['filters']['link_status'];
+      $filters .= ' AND link_status IN(' . implode(',',$nu) . ')';
+    }
+
+    // Postgres => USER is reserved keyword !!
+    $lblVersion = $my['options']['version_string'];
+    $sql = "/* $debugMsg */ " . 
+           " SELECT RCOV.id as link_id, NH_REQ.id,RCOV.req_version_id," .
+           " REQVER.scope, " .
+           " CONCAT(NH_REQ.name,' [{$lblVersion}',REQVER.version ,'] ' ) AS title," .
+           " REQ.req_doc_id, REQVER.version,TLUSER.login AS coverage_author,
+             RCOV.creation_ts AS coverage_ts,
+             REQVER.is_open AS reqver_is_open,
+             TCVER.is_open AS tcversion_is_open," .
+           " CASE " .
+           "      WHEN RCOV.link_status = " . LINK_TC_REQ_OPEN .
+           "           THEN 1 " .
+           "      ELSE 0 " .
+           " END AS can_be_removed " .
+           " FROM {$this->tables['nodes_hierarchy']} NH_REQ " .
+
+           " JOIN {$this->tables['req_coverage']} RCOV " .
+
+           " ON RCOV.req_id = NH_REQ.id " . $tcversionJoin .
+
+           " JOIN {$this->tables['req_versions']} REQVER " .
+           " ON REQVER.id = RCOV.req_version_id " .
+
+           " JOIN {$this->tables['tcversions']} TCVER " .
+           " ON TCVER.id = RCOV.tcversion_id " .
+           
+           " JOIN {$this->tables['requirements']} REQ " .
+           " ON REQ.id = NH_REQ.id " .
+           
+           " LEFT OUTER JOIN {$this->tables['users']} TLUSER " .
+           " ON TLUSER.id = RCOV.author_id " .
+
+           " WHERE NH_REQ.parent_id=" . intval($id) .
+           " AND NH_REQ.node_type_id = {$this->node_types_descr_id['requirement']} AND RCOV.is_active = 1 {$filters} ";
+
+    $itemSet = $this->db->get_recordset($sql);
+    return $itemSet;
+  }
+
+
+  /**
+   *
+   * 
+   */
+  function getReqsOnSpecNotLinkedToLatestTCV($id, $tcase_id=null, $opt=null, $filters = null) {
+
+    static $tcMgr;
+
+    if( !$tcMgr ) {
+      $tcMgr = new testcase( $this->db );
+    }
+
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $my['options'] = array( 'order_by' => 
+                            ' ORDER BY NH_REQ.node_order,NH_REQ.name,REQ.req_doc_id ', 
+                            'output' => 'standard', 
+                            'outputLevel' => 'std', 'decodeUsers' => true);
+    
+    $my['options'] = array_merge($my['options'], (array)$options);
+
+    // null => do not filter
+    $my['filters'] = array('status' => null, 'type' => null);
+    $my['filters'] = array_merge($my['filters'], (array)$filters);
+
+    // 
+    $ltcv = null;
+    if( null == $tcase_id ) {
+      $tcversionJoin =  
+        " LEFT JOIN {$this->views['latest_tcase_version_id']} LTCV " .
+        " ON LTCV.tcversion_id = RCOV.tcversion_id ";
+    } else {
+      $tcInfo = current($tcMgr->get_last_active_version($tcase_id));
+      $ltcv = intval($tcInfo['tcversion_id']);            
+      $tcversionJoin = " AND RCOV.tcversion_id = " . $ltcv;
+    }
+
+    // Step 1 - 
+    // get all req inside the Req Spec Folder ONLY DIRECT CHILDREN
+    //
+    // Step 2 - 
+    // Need to get only the Req Versions That are Assigned 
+    // to Latest Active Test Case Version
+    // I'm doing this because I'm calling this function from 
+    // the Test Spec Tree and in this context I CAN NOT choose 
+    // test case version 
+    // 
+    $sql = "/* $debugMsg */ " . 
+           " SELECT NH_REQ.id,REQVER.scope, " .
+           " CONCAT(NH_REQ.name,' [v', REQVER.version ,'] ' ) AS title," .
+           " REQ.req_doc_id, REQVER.version," .
+           " (CASE WHEN REQVER.version IS NULL " . 
+           "       THEN 1 ELSE 0 END) AS can_be_deleted " .
+
+           " FROM {$this->tables['nodes_hierarchy']} NH_REQ " .
+           " JOIN {$this->tables['requirements']} REQ " .
+           " ON REQ.id = NH_REQ.id " .
+
+
+           " LEFT JOIN {$this->tables['req_coverage']} RCOV " .
+           " ON RCOV.req_id = NH_REQ.id " .
+           $tcversionJoin .
+
+           " LEFT JOIN {$this->tables['req_versions']} REQVER " .
+           " ON REQVER.id = RCOV.req_version_id " .
+           
+           
+           " WHERE NH_REQ.parent_id=" . intval($id) .
+           " AND NH_REQ.node_type_id = {$this->node_types_descr_id['requirement']}";
+
+    $itemSet = $this->db->get_recordset($sql);
+    return $itemSet;
+  }
+
+
+  /**
+   *
+   */
+  function getReqsOnRSpecForLTCVOnTSuite($id, $tsuite_id, $options=null, $filters = null) {
+
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+    $my['options'] = array( 'order_by' => 
+                            ' ORDER BY NH_REQ.node_order,NH_REQ.name,REQ.req_doc_id ', 
+                            'output' => 'standard', 
+                            'outputLevel' => 'std', 'decodeUsers' => true);
+    
+    $my['options'] = array_merge($my['options'], (array)$options);
+
+    // null => do not filter
+    $my['filters'] = array('link_status' => 1, 'type' => null);
+    $my['filters'] = array_merge($my['filters'], (array)$filters);
+
+
+    // Step 1 - 
+    // get all req inside the Req Spec Folder ONLY DIRECT CHILDREN
+    //
+    // Step 2 - 
+    // Need to get only the Req Versions That are Assigned 
+    // to Latest Active Test Case Version
+    // I'm doing this because I'm calling this function from 
+    // the Test Spec Tree and in this context I CAN NOT choose 
+    // test case version 
+    // 
+    $filters = '';
+    if( null != $my['filters']['link_status'] ) {
+      $nu = (array)$my['filters']['link_status'];
+      $filters .= ' AND link_status IN(' . implode(',',$nu) . ')';
+    }
+
+    $getLatestTCVersion = 
+      " SELECT LTCV.tcversion_id AS tcversion_id
+        FROM {$this->tables['nodes_hierarchy']} NHX_TC
+        JOIN {$this->tables['nodes_hierarchy']} NHX_TCV 
+        ON NHX_TCV.parent_id = NHX_TC.id
+        JOIN {$this->views['latest_tcase_version_id']} LTCV 
+        ON LTCV.tcversion_id = NHX_TCV.id
+        WHERE NHX_TC.parent_id = $tsuite_id ";
+
+    // Postgres => USER is reserved keyword !!
+    $sql = "/* $debugMsg */ " . 
+           " SELECT RCOV.id as link_id, NH_REQ.id,RCOV.req_version_id," .
+           " REQVER.scope, " .
+           " CONCAT(NH_REQ.name,' [v', REQVER.version ,'] ' ) AS title," .
+           " REQ.req_doc_id, REQVER.version," .
+           " TLUSER.login AS coverage_author," .
+           " RCOV.creation_ts AS coverage_ts,REQVER.is_open,
+             REQVER.is_open AS reqver_is_open," .
+           " CASE " .
+           "      WHEN RCOV.link_status = " . LINK_TC_REQ_OPEN .
+           "           THEN 1 " .
+           "      ELSE 0 " .
+           " END AS can_be_removed " .
+           " FROM {$this->tables['nodes_hierarchy']} NH_REQ " .
+
+           " JOIN {$this->tables['req_coverage']} RCOV " .
+
+           " ON RCOV.req_id = NH_REQ.id " . 
+           " AND RCOV.tcversion_id IN ( $getLatestTCVersion ) " .
+
+           " JOIN {$this->tables['req_versions']} REQVER " .
+           " ON REQVER.id = RCOV.req_version_id " .
+           
+           " JOIN {$this->tables['requirements']} REQ " .
+           " ON REQ.id = NH_REQ.id " .
+           
+           " LEFT OUTER JOIN {$this->tables['users']} TLUSER " .
+           " ON TLUSER.id = RCOV.author_id " .
+
+           " WHERE NH_REQ.parent_id=" . intval($id) .
+           " AND NH_REQ.node_type_id = {$this->node_types_descr_id['requirement']} AND RCOV.is_active = 1 {$filters} ";
+
+    //echo $sql;
+    $itemSet = $this->db->get_recordset($sql);
+    //var_dump($itemSet);
+
+    return $itemSet;
+  }
+
+
+
+  /*
+    function: getAllLatestRQVOnReqSpec
+              get LATEST VERSION OF requirements contained in a req spec
+              ONLY direct children
+
+    args: id: req spec id
+
+    returns: array of rows
+  */
+  function getAllLatestRQVOnReqSpec($reqSpecID, $opt=null) {
+
+    $debugMsg = 'Class:' . __CLASS__ . ' - Method: ' . __FUNCTION__;
+
+    $options = array('output' => 'mapOnReqID');
+    $options = array_merge($options,(array)$opt);
+
+    $reqNode = $this->node_types_descr_id['requirement'];
+    $sql = "/* $debugMsg */ 
+            SELECT NH_REQ.id,REQV.id AS req_version_id,
+            REQV.version, REQV.scope, NH_REQ.name AS title,
+            CONCAT(REQ.req_doc_id,' [', REQV.version, '] ') AS req_doc_id
+            FROM {$this->tables['nodes_hierarchy']} NH_REQ
+            JOIN {$this->views['latest_req_version_id']} LRQV
+            ON LRQV.req_id = NH_REQ.id 
+
+            JOIN {$this->tables['requirements']} REQ
+            ON REQ.id = NH_REQ.id 
+            
+            JOIN {$this->tables['req_versions']} REQV
+            ON REQV.id = LRQV.req_version_id
+            
+            WHERE NH_REQ.parent_id = {$reqSpecID} 
+            AND NH_REQ.node_type_id = $reqNode ";
+
+    switch($options['output']) {
+      case 'array':
+        $rs = $this->db->get_recordset($sql);
+      break;
+
+      case 'mapOnId':
+      default:
+        $rs = $this->db->fetchRowsIntoMap($sql,'id');
+      break;
+    }
+    return $rs;
+  }
+
 } // class end
-?>

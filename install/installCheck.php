@@ -4,21 +4,19 @@
  * This script is distributed under the GNU General Public License 2 or later. 
  *
  * Verify environment
- * Note: informations are passed via $_SESSION
+ * Note: information is passed via $_SESSION
  * 
+ * @filesource	installCheck.php
  * @package 	TestLink
  * @author 		Martin Havlat
- * @copyright 	2009, TestLink community 
- * @version    	CVS: $Id: installCheck.php,v 1.3 2010/10/02 18:02:06 franciscom Exp $
+ * @copyright 	2009,2012 TestLink community 
  *
- * @internal Revisions:
- * 20080914 - franciscom - check_php_resource_settings() 
- * 20080219 - franciscom - fixed dir permission checking
- * 
+ * @internal revisions
+ * @since 1.9.6
  **/
-
-//require_once("installUtils.php");
-require_once('..'.DIRECTORY_SEPARATOR.'lib'.DIRECTORY_SEPARATOR.'functions'.DIRECTORY_SEPARATOR.'configCheck.php');
+require_once('..' . DIRECTORY_SEPARATOR . 'config.inc.php');
+require_once('..' . DIRECTORY_SEPARATOR . 'lib'. DIRECTORY_SEPARATOR . 'functions' . DIRECTORY_SEPARATOR . 'common.php');
+require_once('..' . DIRECTORY_SEPARATOR . 'lib'. DIRECTORY_SEPARATOR . 'functions' . DIRECTORY_SEPARATOR . 'configCheck.php');
 
 if( !isset($_SESSION) )
 { 
@@ -37,7 +35,7 @@ include 'installHead.inc';
 
 <?php
 // Check before DB installation
-$inst_type = $_GET['installationType'];
+$inst_type = isset($_GET['type']) ? $_GET['type'] : '';
 $errors = 0;
 reportCheckingSystem($errors);
 reportCheckingWeb($errors);
@@ -56,7 +54,7 @@ reportCheckingPermissions($errors,$inst_type);
 	<br />Please correct the error<?php echo $errors > 1 ? "s" : "" ; ?>, 
 	and try again (reload page). If you need help figuring out how to fix the 
 	problem<?php echo $errors > 1 ? "s" : "" ; ?>, please read Installation manual and
-	visit <a href="http://www.teamst.org" target="_blank">TestLink Forums [click here]</a>.
+	visit <a href="http://www.testlink.org" target="_blank">TestLink Forums [click here]</a>.
 	</p>
 </div>
 <?php

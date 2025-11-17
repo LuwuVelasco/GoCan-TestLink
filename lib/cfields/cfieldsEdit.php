@@ -3,20 +3,7 @@
  * TestLink Open Source Project - http://testlink.sourceforge.net/
  * This script is distributed under the GNU General Public License 2 or later.
  *
- * Filename $RCSfile: cfieldsEdit.php,v $
- *
- * @version $Revision: 1.19 $
- * @modified $Date: 2009/05/31 17:11:51 $ by $Author: franciscom $
- *
- * rev: 20090531 - franciscom - minor bug additional first char ' ' on name and label
- *                              while creating new custom field
- *      20090524 - franciscom - logic changes to give user a better understanding
- *                              of TL application areas where CF will be managed
- *                              request2cf() changed
- *  
- *      20090503 - franciscom - BUGID 2425
- *      20090408 - franciscom - BUGID 2352, BUGID 2359
- *      20080810 - franciscom - BUGID 1650 
+ * @filesource	cfieldsEdit.php
  *
  */
 require_once(dirname(__FILE__) . "/../../config.inc.php");
@@ -25,94 +12,71 @@ testlinkInitPage($db,false,false,"checkRights");
 
 $cfield_mgr = new cfield_mgr($db);
 $templateCfg = templateConfiguration();
-$args=init_args();
+$args = init_args();
+$gui = initializeGui($cfield_mgr);
 
-$gui = new stdClass();
-$gui->cfield=null;
-$gui->cfield_is_used=0;
-$gui->cfield_is_linked=0;
-$gui->linked_tprojects=null;
-$gui->cfield_types=$cfield_mgr->get_available_types();
 
 $result_msg = null;
 $do_control_combo_display = 1;
+$cfMix = getCFCfg($args,$cfield_mgr);
+$cfieldCfg = $cfMix->cfieldCfg;
+$gui->cfield = $cfMix->emptyCF;
 
-$cfieldCfg=cfieldCfgInit($cfield_mgr);
-$emptyCF = array('id' => $args->cfield_id,
-		         'name' => '','label' => '',
-				 'type' => 0,'possible_values' => '',
-		         'show_on_design' => 1,'enable_on_design' => 1,
-		         'show_on_execution' => 1,'enable_on_execution' => 1,
-		         'show_on_testplan_design' => 1,'enable_on_testplan_design' => 1,
-		         'node_type_id' => $cfieldCfg->allowed_nodes['testcase']);
-
-$gui->cfield = $emptyCF;
-switch ($args->do_action)
-{
+switch ($args->do_action) {
 	case 'create':
-    	$templateCfg->template=$templateCfg->default_template;
+  	$templateCfg->template=$templateCfg->default_template;
 		$user_feedback ='';
-    	$operation_descr = '';
-		break;
+  	$operation_descr = '';
+	break;
 
 	case 'edit':
-	  	$op = edit($args,$cfield_mgr);
+	 	$op = edit($args,$cfield_mgr);
 		$gui->cfield = $op->cf;
 		$gui->cfield_is_used = $op->cf_is_used;
 		$gui->cfield_is_linked = $op->cf_is_linked;
 		$gui->linked_tprojects = $op->linked_tprojects;
-    	$user_feedback = $op->user_feedback;
-    	$operation_descr=$op->operation_descr;
-		break;
+   	$user_feedback = $op->user_feedback;
+   	$operation_descr=$op->operation_descr;
+	break;
 
 	case 'do_add':
-	  	$op = doCreate($_REQUEST,$cfield_mgr);
+  case 'do_add_and_assign':
+	 	$op = doCreate($_REQUEST,$cfield_mgr,$args);
 		$gui->cfield = $op->cf;
-    	$user_feedback = $op->user_feedback;
-    	$templateCfg->template = $op->template;
-    	$operation_descr = '';
-		break;
+   	$user_feedback = $op->user_feedback;
+   	$templateCfg->template = $op->template;
+   	$operation_descr = '';
+	break;
 
 	case 'do_update':
-	  	$op = doUpdate($_REQUEST,$args,$cfield_mgr);
+	 	$op = doUpdate($_REQUEST,$args,$cfield_mgr);
 		$gui->cfield = $op->cf;
-    	$user_feedback = $op->user_feedback;
-    	$operation_descr=$op->operation_descr;
-    	$templateCfg->template = $op->template;
-		break;
+   	$user_feedback = $op->user_feedback;
+   	$operation_descr=$op->operation_descr;
+   	$templateCfg->template = $op->template;
+	break;
 
 	case 'do_delete':
 		$op = doDelete($args,$cfield_mgr);
-	    $user_feedback = $op->user_feedback;
-    	$operation_descr=$op->operation_descr;
+	  $user_feedback = $op->user_feedback;
+   	$operation_descr=$op->operation_descr;
 		$templateCfg->template = $op->template;
 		$do_control_combo_display = 0;
-		break;
+	break;
 }
 
-// To control combo display
-// 20090524 - franciscom - this must be refactored to removed useless code
-// after more tests
-if( $do_control_combo_display )
-{
-    $keys2loop = $cfield_mgr->get_application_areas();
+if( $do_control_combo_display ) {
+  $keys2loop = $cfield_mgr->get_application_areas();
+	foreach( $keys2loop as $ui_mode) {
+    $cfieldCfg->cf_enable_on[$ui_mode]['value']=0;
+    $cfieldCfg->cf_show_on[$ui_mode]['disabled']='';
+    $cfieldCfg->cf_show_on[$ui_mode]['style']='';
 
-	foreach( $keys2loop as $ui_mode)
-	{
-        // 20090524 - this must be removed useless in future
-		//if(!$cfieldCfg->enable_on_cfg[$ui_mode][$gui->cfield['node_type_id']])
-		//{
-		//	$cfieldCfg->disabled_cf_enable_on[$ui_mode]=' disabled="disabled" ';
-        //}
-
-        // 20090524 - franciscom - refactoring
-        if($cfieldCfg->enable_on_cfg[$ui_mode][$gui->cfield['node_type_id']])
-		{
-		    $cfieldCfg->cf_enable_on[$ui_mode]['value']=1;
-        }
+    if($cfieldCfg->enable_on_cfg[$ui_mode][$gui->cfield['node_type_id']]) {
+	    $cfieldCfg->cf_enable_on[$ui_mode]['value']=1;
+    }
         
-		if(!$cfieldCfg->show_on_cfg[$ui_mode][$gui->cfield['node_type_id']])
-		{
+		if(!$cfieldCfg->show_on_cfg[$ui_mode][$gui->cfield['node_type_id']]) {
 			$cfieldCfg->cf_show_on[$ui_mode]['disabled']=' disabled="disabled" ';
 			$cfieldCfg->cf_show_on[$ui_mode]['style']=' style="display:none;" ';
 		}
@@ -120,24 +84,53 @@ if( $do_control_combo_display )
 }
 
 $gui->show_possible_values = 0;
-if(isset($gui->cfield['type']))
-{
+if(isset($gui->cfield['type'])) {
 	$gui->show_possible_values = $cfieldCfg->possible_values_cfg[$gui->cfield['type']];
 }
 
 // enable on 'execution' implies show on 'execution' then has nosense to display show_on combo
-if($args->do_action == 'edit' && $gui->cfield['enable_on_execution'] )
-{
-    $cfieldCfg->cf_show_on['execution']['style']=' style="display:none;" ';
+if($args->do_action == 'edit' && $gui->cfield['enable_on_execution'] ) {
+  $cfieldCfg->cf_show_on['execution']['style']=' style="display:none;" ';
 } 
 
-$gui->cfieldCfg=$cfieldCfg;
+$gui->cfieldCfg = $cfieldCfg;
 
 $smarty = new TLSmarty();
 $smarty->assign('operation_descr',$operation_descr);
 $smarty->assign('user_feedback',$user_feedback);
 $smarty->assign('user_action',$args->do_action);
 renderGui($smarty,$args,$gui,$cfield_mgr,$templateCfg);
+
+/**
+ *
+ */
+function getCFCfg(&$args,&$cfield_mgr) {
+  $cfg = new stdClass();
+
+  $cfg->cfieldCfg = cfieldCfgInit($cfield_mgr);
+  
+  $cfg->emptyCF = array('id' => $args->cfield_id,
+                        'name' => '','label' => '',
+                        'type' => 0,'possible_values' => '',
+                        'show_on_design' => 1,'enable_on_design' => 1,
+                        'show_on_execution' => 0,'enable_on_execution' => 0,
+                        'show_on_testplan_design' => 0,
+                        'enable_on_testplan_design' => 0);
+
+  $cfg->emptyCF['node_type_id'] = $cfg->cfieldCfg->allowed_nodes['testcase'];
+
+  return $cfg;
+}
+
+
+/**
+ *
+ */
+function initializeGui(&$cfield_mgr) {
+  $gui = $cfield_mgr->initViewGUI();
+  return $gui;
+}
+
 
 
 /*
@@ -245,9 +238,15 @@ function init_args()
 {
     $_REQUEST=strings_stripSlashes($_REQUEST);
     $args = new stdClass();
-    $args->do_action = isset($_REQUEST['do_action']) ? $_REQUEST['do_action']:null;
-    $args->cfield_id = isset($_REQUEST['cfield_id']) ? $_REQUEST['cfield_id']:0;
-    $args->cf_name = isset($_REQUEST['cf_name']) ? $_REQUEST['cf_name']:null;
+    $args->do_action = isset($_REQUEST['do_action']) ? $_REQUEST['do_action'] : null;
+    $args->cfield_id = isset($_REQUEST['cfield_id']) ? intval($_REQUEST['cfield_id']) : 0;
+    $args->cf_name = isset($_REQUEST['cf_name']) ? $_REQUEST['cf_name'] : null;
+
+    $args->tproject_id = isset($_REQUEST['tproject_id']) ? intval($_REQUEST['tproject_id']) : 0;
+    if( $args->tproject_id == 0 )
+    {
+      $args->tproject_id = isset($_SESSION['testprojectID']) ? intval($_SESSION['testprojectID']) : 0;
+    }  
     return $args;
 }
 
@@ -261,27 +260,28 @@ function init_args()
 */
 function edit(&$argsObj,&$cfieldMgr)
 {
-    $op = new stdClass();
-    $op->cf = null;
-    $op->cf_is_used = 0;
-    $op->cf_is_linked = 0;
+  $op = new stdClass();
+  $op->cf = null;
+  $op->cf_is_used = 0;
+  $op->cf_is_linked = 0;
     
-    $op->user_feedback = '';
-    $op->template = null;
-    $op->operation_descr = '';
-    $op->linked_tprojects = null;
+  $op->user_feedback = '';
+  $op->template = null;
+  $op->operation_descr = '';
+  $op->linked_tprojects = null;
 
 	$cfinfo = $cfieldMgr->get_by_id($argsObj->cfield_id);
+
 	if ($cfinfo)
 	{
 		$op->cf = $cfinfo[$argsObj->cfield_id];
 		$op->cf_is_used = $cfieldMgr->is_used($argsObj->cfield_id);
 		
-  		$op->operation_descr = lang_get('title_cfield_edit') . TITLE_SEP_TYPE3 . $op->cf['name'];
-  		$op->linked_tprojects = $cfieldMgr->get_linked_testprojects($argsObj->cfield_id); 
-  		$op->cf_is_linked = !is_null($op->linked_tprojects) && count($op->linked_tprojects) > 0;
+		$op->operation_descr = lang_get('title_cfield_edit') . TITLE_SEP_TYPE3 . $op->cf['name'];
+		$op->linked_tprojects = $cfieldMgr->get_linked_testprojects($argsObj->cfield_id); 
+ 		$op->cf_is_linked = !is_null($op->linked_tprojects) && count($op->linked_tprojects) > 0;
 	}
-    return $op;
+  return $op;
 }
 
 
@@ -293,39 +293,45 @@ function edit(&$argsObj,&$cfieldMgr)
   returns:
 
 */
-function doCreate(&$hash_request,&$cfieldMgr)
+function doCreate(&$hash_request,&$cfieldMgr,&$argsObj)
 {
-    $op = new stdClass();
-   	$op->template = "cfieldsEdit.tpl";
-    $op->user_feedback='';
+  $op = new stdClass();
+  $op->template = "cfieldsEdit.tpl";
+  $op->user_feedback='';
 	$op->cf = request2cf($hash_request);
 
 	$keys2trim=array('name','label','possible_values');
 	foreach($keys2trim as $key)
 	{
-	    $op->cf[$key]=trim($op->cf[$key]);
+	  $op->cf[$key]=trim($op->cf[$key]);
 	}
-    // Check if name exists
-    $dupcf = $cfieldMgr->get_by_name($op->cf['name']);
-    if(is_null($dupcf))
-    {
-    	$ret = $cfieldMgr->create($op->cf);
-    	if(!$ret['status_ok'])
-    	{
-    		$op->user_feedback = lang_get("error_creating_cf");
-    	}
-    	else
-    	{
-    	  	$op->template = null;
-    		logAuditEvent(TLS("audit_cfield_created",$op->cf['name']),"CREATE",$ret['id'],"custom_fields");
-    	}
+  
+  // Check if name exists
+  $dupcf = $cfieldMgr->get_by_name($op->cf['name']);
+  if(is_null($dupcf))
+  {
+  	$ret = $cfieldMgr->create($op->cf);
+   	if(!$ret['status_ok'])
+   	{
+   		$op->user_feedback = lang_get("error_creating_cf");
+   	}
+   	else
+   	{
+    	$op->template = null;
+   		logAuditEvent(TLS("audit_cfield_created",$op->cf['name']),"CREATE",$ret['id'],"custom_fields");
+   	
+      if($hash_request['do_action'] == 'do_add_and_assign')
+      {
+        $cfieldMgr->link_to_testproject($argsObj->tproject_id,array($ret['id']));
+      }  
     }
-    else
+  }
+  else
 	{
-    	$op->user_feedback = lang_get("cf_name_exists");
-    }
+  	$op->user_feedback = lang_get("cf_name_exists");
+  }
     
-    return $op;
+  return $op;
 }
 
 
@@ -340,15 +346,15 @@ function doCreate(&$hash_request,&$cfieldMgr)
 */
 function doUpdate(&$hash_request,&$argsObj,&$cfieldMgr)
 {
-    $op = new stdClass();
-    $op->template = "cfieldsEdit.tpl";
-    $op->user_feedback='';
+  $op = new stdClass();
+  $op->template = "cfieldsEdit.tpl";
+  $op->user_feedback='';
 	$op->cf = request2cf($hash_request);
 	$op->cf['id'] = $argsObj->cfield_id;
 
-    $oldObjData=$cfieldMgr->get_by_id($argsObj->cfield_id);
-    $oldname=$oldObjData[$argsObj->cfield_id]['name'];
-    $op->operation_descr=lang_get('title_cfield_edit') . TITLE_SEP_TYPE3 . $oldname;
+  $oldObjData=$cfieldMgr->get_by_id($argsObj->cfield_id);
+  $oldname=$oldObjData[$argsObj->cfield_id]['name'];
+  $op->operation_descr=lang_get('title_cfield_edit') . TITLE_SEP_TYPE3 . $oldname;
 
 	$keys2trim=array('name','label','possible_values');
 	foreach($keys2trim as $key)
@@ -368,8 +374,9 @@ function doUpdate(&$hash_request,&$argsObj,&$cfieldMgr)
 		}
 	}
 	else
+  {  
 		$op->user_feedback = lang_get("cf_name_exists");
-	
+	}
 	return $op;
 }
 
@@ -404,42 +411,30 @@ function doDelete(&$argsObj,&$cfieldMgr)
 }
 
 
-
-
-
-
 /*
   function: cfieldCfgInit
 
   args :
 
   returns: object with configuration options
-  
-  rev: 20080810 - franciscom - BUGID 1650 (REQ - CF on testplan_design)
-
 */
 function cfieldCfgInit($cfieldMgr)
 {
     $cfg = new stdClass();
-    $cfAppAreas=$cfieldMgr->get_application_areas();     // 20080810 - BUGID 1650 - Start
+    $cfAppAreas=$cfieldMgr->get_application_areas();
     foreach($cfAppAreas as $area)
     {
-        $cfg->disabled_cf_enable_on[$area]='';
-        $cfg->cf_show_on[$area]['disabled']='';
-        $cfg->cf_show_on[$area]['style']='';
+      $cfg->disabled_cf_enable_on[$area] = array();
+      $cfg->cf_show_on[$area]['disabled'] = '';
+      $cfg->cf_show_on[$area]['style'] = '';
         
-        $cfg->cf_enable_on[$area]='';
-        $cfg->cf_enable_on[$area]['label']=lang_get($area);
-        $cfg->cf_enable_on[$area]['value']=0;
-        
-        
+      $cfg->cf_enable_on[$area] = array();
+      $cfg->cf_enable_on[$area]['label'] = lang_get($area);
+      $cfg->cf_enable_on[$area]['value'] = 0;
+             
     	$cfg->enable_on_cfg[$area] = $cfieldMgr->get_enable_on_cfg($area);
     	$cfg->show_on_cfg[$area] = $cfieldMgr->get_show_on_cfg($area);
-    	
-    	// $cfg->enable_on['app_areas'][$area] = $cfieldMgr->get_enable_on_cfg($area);
-    	// $cfg->enable_on['style_display'][$area] = $cfg->enable_on['app_areas'][$area];
-    	
-    }// 20080810 - BUGID 1650 - End
+    }
 
     $cfg->possible_values_cfg = $cfieldMgr->get_possible_values_cfg();
     $cfg->allowed_nodes = $cfieldMgr->get_allowed_nodes();
@@ -461,39 +456,38 @@ function cfieldCfgInit($cfieldMgr)
 
   returns: - 
   
-  rev: 20080921 - franciscom - added guiObj argument
 
 */
 function renderGui(&$smartyObj,&$argsObj,&$guiObj,&$cfieldMgr,$templateCfg)
 {
-    $doRender=false;
-    switch($argsObj->do_action)
-    {
-    	case "do_add":
-    	case "do_delete":
-    	case "do_update":
-        $doRender=true;
-    		$tpl = is_null($templateCfg->template) ? 'cfieldsView.tpl' : $templateCfg->template;
-    		break;
+  $doRender=false;
+  switch($argsObj->do_action)
+  {
+  	case "do_add":
+  	case "do_delete":
+  	case "do_update":
+    case "do_add_and_assign":
+      $doRender=true;
+  		$tpl = is_null($templateCfg->template) ? 'cfieldsView.tpl' : $templateCfg->template;
+  	break;
 
-    	case "edit":
-    	case "create":
-        $doRender=true;
-    		$tpl = is_null($templateCfg->template) ? $templateCfg->default_template : $templateCfg->template;
-    		break;
-    }
+  	case "edit":
+  	case "create":
+      $doRender=true;
+  		$tpl = is_null($templateCfg->template) ? $templateCfg->default_template : $templateCfg->template;
+  	break;
+  }
 
-    if($doRender)
-    {
-		    $guiObj->cf_map=$cfieldMgr->get_all();
-		    $guiObj->cf_types=$cfieldMgr->get_available_types();
-		    $smartyObj->assign('gui',$guiObj);
-		    $smartyObj->display($templateCfg->template_dir . $tpl);
-	  }
+  if($doRender)
+  {
+   $guiObj->cf_map = $cfieldMgr->get_all(null,'transform');
+   $guiObj->cf_types=$cfieldMgr->get_available_types();
+   $smartyObj->assign('gui',$guiObj);
+   $smartyObj->display($templateCfg->template_dir . $tpl);
+  }
 }
 
 function checkRights(&$db,&$user)
 {
 	return $user->hasRight($db,"cfield_management");
 }
-?>

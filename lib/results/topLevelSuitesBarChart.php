@@ -3,22 +3,18 @@
  * TestLink Open Source Project - http://testlink.sourceforge.net/ 
  * This script is distributed under the GNU General Public License 2 or later. 
  *
- * Filename $RCSfile: topLevelSuitesBarChart.php,v $
- * @version $Revision: 1.15 $
- * @modified $Date: 2010/09/12 17:09:17 $ by $Author: franciscom $
+ * @filesource	topLevelSuitesBarChart.php
  *
- * @author	Kevin Levy
+ * @author      Francisco Mancardi
  *
  * @internal revisions
+ * @since 1.9.10
  *
- * 20100912 - franciscom - BUGID 2215
- * 20081116 - franciscom - refactored to display X axis ordered (alphabetical).
- * 20081113 - franciscom - BUGID 1848
  *
  */
 require_once('../../config.inc.php');
+require_once('common.php');
 require_once('charts.inc.php');
-testlinkInitPage($db,false,false,"checkRights");
 
 $cfg = new stdClass();
 $cfg->scale = new stdClass();
@@ -33,7 +29,13 @@ $cfg->beginX = $chart_cfg['beginX'];
 $cfg->beginY = $chart_cfg['beginY'];
 $cfg->scale->legendXAngle = $chart_cfg['legendXAngle'];
 
-$info = getDataAndScale($db);
+$args = init_args($db);
+$info = getDataAndScale($db,$args);
+if( property_exists($args,'debug') )
+{
+	new dBug($info);
+	die();
+}
 createChart($info,$cfg);
 
 
@@ -45,55 +47,116 @@ createChart($info,$cfg);
   returns: 
 
 */
-function getDataAndScale(&$dbHandler)
+function getDataAndScale(&$dbHandler,$argsObj)
 {
-    $obj = new stdClass(); 
-    $totals = null; 
-    $resultsCfg = config_get('results');
+  $obj = new stdClass(); 
+  $totals = null; 
+  $resultsCfg = config_get('results');
+	$metricsMgr = new tlTestPlanMetrics($dbHandler);
 
-    $dataSet = $_SESSION['statistics']['getTopLevelSuites'];
-    $mapOfAggregate = $_SESSION['statistics']['getAggregateMap'];
+  $dataSet = $metricsMgr->getRootTestSuites($argsObj->tplan_id,$argsObj->tproject_id);
+  $dummy = $metricsMgr->getStatusTotalsByTopLevelTestSuiteForRender($argsObj->tplan_id);
+  $obj->canDraw = !is_null($dummy->info);
+    
+	if( property_exists($argsObj,'debug') )
+	{
+  	new dBug($dummy->info);
+  }
      
-    $obj->canDraw = !is_null($dataSet);
-    if($obj->canDraw) 
+  if($obj->canDraw) 
+  {    
+    //// Process to enable alphabetical order
+		$item_descr = array_flip($dataSet);
+    ksort($item_descr);
+    foreach($item_descr as $name => $tsuite_id)
     {
-        // Process to enable alphabetical order
-        foreach($dataSet as $tsuite)
-        {
-            $item_descr[$tsuite['name']] = $tsuite['id'];
-        }  
-        ksort($item_descr);
-        
-        foreach($item_descr as $name => $tsuite_id)
-        {
-            $items[]=htmlspecialchars($name);
-            $rmap = $mapOfAggregate[$tsuite_id];
-             
-            unset($rmap['total']);
-        	foreach($rmap as $key => $value)
-        	{
-        		$totals[$key][]=$value;  
-        	}
-        }
+      if( isset($dummy->info[$tsuite_id]) )
+      {
+       	$items[]=htmlspecialchars($name);
+	      $rmap = $dummy->info[$tsuite_id]['details'];
+	     	foreach($rmap as $key => $value)
+	     	{
+	     		$totals[$key][]=$value['qty'];  
+	     	}
+     	}
+     	else
+     	{
+     		// make things work, but create log this is not ok
+     		tlog(__FILE__ . '::' . __FUNCTION__ . 'Missing item: name/id:' . 
+     		     "$name/$tsuite_id", 'DEBUG');
+     	}
     }
+  }   
     
-    $obj->xAxis = new stdClass();
-    $obj->xAxis->values = $items;
-    $obj->xAxis->serieName = 'Serie8';
-    $obj->series_color = null;
+  $obj->xAxis = new stdClass();
+  $obj->xAxis->values = $items;
+  $obj->xAxis->serieName = 'Serie8';
+  $obj->series_color = null;
     
-    foreach($totals as $status => $values)
-    {
-       $obj->chart_data[] = $values;
-       $obj->series_label[] = lang_get($resultsCfg['status_label'][$status]);
-       $obj->series_color[] = $resultsCfg['charts']['status_colour'][$status];
-    }
+  foreach($totals as $status => $values)
+  {
+    $obj->chart_data[] = $values;
+    $obj->series_label[] = lang_get($resultsCfg['status_label'][$status]);
+ 	  if( isset($resultsCfg['charts']['status_colour'][$status]) )
+    {	
+			$obj->series_color[] = $resultsCfg['charts']['status_colour'][$status];
+    }	
+  }
  
-    return $obj;
+  return $obj;
 }
 
+/**
+ *
+ */
+function init_args(&$dbHandler)
+{
+  $iParams = array("apikey" => array(tlInputParameter::STRING_N,0,64),
+                   "tproject_id" => array(tlInputParameter::INT_N), 
+                   "tplan_id" => array(tlInputParameter::INT_N));
+
+  $args = new stdClass();
+  R_PARAMS($iParams,$args);
+
+  if( !is_null($args->apikey) )
+  {
+    $cerbero = new stdClass();
+    $cerbero->args = new stdClass();
+    $cerbero->args->tproject_id = $args->tproject_id;
+    $cerbero->args->tplan_id = $args->tplan_id;
+
+    if(strlen($args->apikey) == 32)
+    {
+      $cerbero->args->getAccessAttr = true;
+      $cerbero->method = 'checkRights';
+      $cerbero->redirect_target = "../../login.php?note=logout";
+      setUpEnvForRemoteAccess($dbHandler,$args->apikey,$cerbero);
+    }
+    else
+    {
+      $args->addOpAccess = false;
+      $cerbero->method = null;
+      $cerbero->args->getAccessAttr = false;
+      setUpEnvForAnonymousAccess($dbHandler,$args->apikey,$cerbero);
+    }  
+  }
+  else
+  {
+    testlinkInitPage($dbHandler,false,false,"checkRights");  
+    // $args->tproject_id = isset($_SESSION['testprojectID']) ? intval($_SESSION['testprojectID']) : 0;
+  }
+
+	if( isset($_REQUEST['debug']) )
+	{
+		$args->debug = 'yes';
+	}
+	return $args;
+}
+
+/**
+ *
+ */
 function checkRights(&$db,&$user)
 {
 	return $user->hasRight($db,'testplan_metrics');
 }
-?>

@@ -3,40 +3,15 @@
  * TestLink Open Source Project - http://testlink.sourceforge.net/
  * This script is distributed under the GNU General Public License 2 or later.
  *
- * link/unlink test cases to a test plan
+ * Test navigator for Test Plan for following features
  *
- * @package 	TestLink
- * @copyright 	2007-2009, TestLink community
- * @version    	CVS: $Id: execNavigator.php,v 1.122 2010/10/07 19:53:26 franciscom Exp $
- * @filesource	http://testlink.cvs.sourceforge.net/viewvc/testlink/testlink/lib/functions/object.class.php?view=markup
- * @link 		http://www.teamst.org/index.php
+ * - Test case execution
  *
- * @internal Revisions:
- * 20101007 - franciscom - 	BUGID 3270 - Export Test Plan in XML Format
- * 20100628 - asimon - removal of constants from filter control class
- * 20100624 - asimon - CVS merge (experimental branch to HEAD)
- * 20100622 - asimon - huge refactoring for new filter design,
- *                     removed as much logic from here as possible
- * 20100609 - eloff - Prevent selection of invalid platform
- * 20100428 - asimon - BUGID 3301 and related issues - changed name or case
- *                     of some variables used in new common template
- * 20100417 - franciscom - BUGID 3380 execution type filter
- * 20100409 - eloff - BUGID 3050 - remember selected platform and build in session
- * 20100222 - asimon - fixes in initializeGui() for testplan select box when there are no builds
- * 20100217 - asimon - added check for open builds on initBuildInfo()
- * 20100202 - asimon - changed filtering, BUGID 2455, BUGID 3026
- * 20090828 - franciscom - added contribution platform feature
- * 20090828 - franciscom - BUGID 2296 - filter by Last Exec Result on Any of previous builds
- * 20081227 - franciscom - BUGID 1913 - filter by same results on ALL previous builds
- * 20081220 - franciscom - advanced/simple filters
- * 20081217 - franciscom - only users that have effective role with right
- *                         that allow test case execution are displayed on
- *                         filter by user combo.
+ * @filesource  execNavigator.php
+ * @package     TestLink
+ * @copyright   2007-2017, TestLink community
+ * @link        http://www.testlink.org
  *
- * 20080517 - franciscom - fixed testcase filter bug
- * 20080428 - franciscom - keyword filter can be done on multiple keywords
- * 20080224 - franciscom - refactoring
- * 20080224 - franciscom - BUGID 1056
  *
  **/
 
@@ -50,33 +25,118 @@ testlinkInitPage($db);
 
 $templateCfg = templateConfiguration();
 
+$chronos[] = $tstart = microtime(true);
 $control = new tlTestCaseFilterControl($db, 'execution_mode');
-$gui = initializeGui($control);
+$control->formAction = '';
+
+$gui = initializeGui($db,$control);
+
+
 $control->build_tree_menu($gui);
+
+
 $smarty = new TLSmarty();
+if( $gui->execAccess ) {
+  $smarty->assign('gui',$gui);
+  $smarty->assign('control', $control);
+  $smarty->assign('menuUrl',$gui->menuUrl);
+  $smarty->assign('args', $gui->args);
+  $tpl = $templateCfg->template_dir . $templateCfg->default_template;
+} else {
+  $tpl = 'noaccesstofeature.tpl';
+}
 
-$smarty->assign('gui',$gui);
-$smarty->assign('control', $control);
-$smarty->assign('menuUrl',$gui->menuUrl);
-$smarty->assign('args', $gui->args);
-
-$smarty->display($templateCfg->template_dir . $templateCfg->default_template);
+$smarty->display($tpl);
 
 
 /**
  * 
  *
  */
-function initializeGui(&$control) {
-	$gui = new stdClass();
-	
-	$gui->menuUrl = 'lib/execute/execSetResults.php';
-	$gui->args = $control->get_argument_string();
-	$gui->src_workframe = $control->args->basehref . $gui->menuUrl .
-	                "?edit=testproject&id={$control->args->testproject_id}" . $gui->args;
-	
-	// BUGID 3270 - Export Test Plan in XML Format
-	$control->draw_export_testplan_button = true;
-	return $gui;
+function initializeGui(&$dbH,&$control) {
+  $gui = new stdClass();
+  
+  // This logic is managed from execSetResults.php
+  $gui->loadExecDashboard = true;
+  if( isset($_SESSION['loadExecDashboard'][$control->form_token]) || 
+      $control->args->loadExecDashboard == 0 
+    ) {
+    $gui->loadExecDashboard = false;  
+    unset($_SESSION['loadExecDashboard'][$control->form_token]);      
+  }  
+
+  $gui->menuUrl = 'lib/execute/execSetResults.php';
+  $gui->args = $control->get_argument_string();
+  if($control->args->loadExecDashboard == false) {
+    $gui->src_workframe = '';
+  } else {
+    $gui->src_workframe = $control->args->basehref . $gui->menuUrl .
+                          "?edit=testproject&id={$control->args->testproject_id}" . 
+                          $gui->args;
+  } 
+  
+  $control->draw_export_testplan_button = true;
+  $control->draw_import_xml_results_button = true;
+  
+  
+  $dummy = config_get('results');
+  $gui->not_run = $dummy['status_code']['not_run'];
+  
+  $dummy = config_get('execution_filter_methods');
+  $gui->lastest_exec_method = $dummy['status_code']['latest_execution'];
+  $gui->pageTitle = lang_get('href_execute_test');
+
+  $grants = checkAccessToExec($dbH,$control);
+
+  // feature to enable/disable
+  $gui->features = array('export' => false,'import' => false);
+  $gui->execAccess = false;
+  if($grants['testplan_execute']) {
+    $gui->features['export'] = true;
+    $gui->features['import'] = true;
+    $gui->execAccess = true;
+  }  
+
+  if($grants['exec_ro_access']) {
+    $gui->execAccess = true;
+  }  
+
+
+  $control->draw_export_testplan_button = $gui->features['export'];
+  $control->draw_import_xml_results_button = $gui->features['import'];
+
+  return $gui;
 }
-?>
+
+
+/**
+ *
+ */
+function checkAccessToExec(&$dbH,&$ct) {
+  $tplan_id = intval($ct->args->testplan_id);
+  $sch = tlObject::getDBTables(array('testplans'));
+  $sql = "SELECT testproject_id FROM {$sch['testplans']} " .
+         "WHERE id=" . $tplan_id;
+  $rs = $dbH->get_recordset($sql);
+  if(is_null($rs))
+  {
+    throw new Exception("Can not find Test Project For Test Plan - ABORT", 1);
+    
+  }  
+  $rs = current($rs);
+  $tproject_id = $rs['testproject_id'];
+
+  $user = $_SESSION['currentUser'];
+  $grants = null;
+  $k2a = array('testplan_execute','exec_ro_access');
+  foreach($k2a as $r2c)
+  {
+    $grants[$r2c] = false;
+    if( $user->hasRight($dbH,$r2c,$tproject_id,$tplan_id,true) || $user->globalRoleID == TL_ROLES_ADMIN )
+    {
+      $grants[$r2c] = true;
+    }    
+  }  
+
+  return $grants;
+} 

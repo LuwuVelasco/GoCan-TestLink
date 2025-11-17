@@ -3,39 +3,37 @@
  * ♔ TestLink Open Source Project - http://testlink.sourceforge.net/
  * This script is distributed under the GNU General Public License 2 or later.
  *
- * Filename $RCSfile: strings.txt,v $
- * @version $Revision: 1.4 $
- * @modified $Date: 2010/06/24 17:25:55 $ by $Author: asimon83 $
+ * Korean (ko_KR) strings (en_GB is default development language)
  *
- * @copyright Copyright (c) 2003-9, TestLink community
- * @author Jiun PARK (DQA Team, OPENTECH INC. R&D Center) E-mail : rustyheart@gmail.com
- *
- * --------------------------------------------------------------------------------------
- * 
- * Korean translation - strings 
- *
- * This list of labels is defined as GLOBAL string variables. The first sections are general 
- * for strings used over all GUI. These definition should not be redefined. Next sections are 
- * related to particular pages. Comment with page filename indicate a begin of section. There 
- * must be defined all other strings. 
+ * This list of labels is defined as GLOBAL string variables. The first sections are general
+ * for strings used over all GUI. These definition should not be redefined. Next sections are
+ * related to particular pages. Comment with page filename indicate a begin of section. There
+ * must be defined all other strings.
+ * Do not use html elements in this file.
  *
  * To avoid override of other globals we are using $TLS_ (Test Link String) prefix.
- * This must be a reserved prefix. The second part of variable name (after 
+ * This must be a reserved prefix. The second part of variable name (after
  * prefix) should indicate usage (warning, title), the third one indicate the page relation
  * and text at the end.
  *
- * Warning: be careful about format - the file is parsed by script
- * Warning: if JS string you must use \\n to get \n for end of line
- * Note: API interface is not localized (except error messages)
- * 
- * --------------------------------------------------------------------------------------
- * Revisions:
- * 2009/05/27 - Initial translation (TL 1.8.2)
+ * ********************************************************************************************
+ * Warning - Warning - Warning - Warning - Warning - Warning - Warning - Warning - Warning
+ * ********************************************************************************************
  *
- */
+ * 1. Be careful about format - the file is parsed by script	comment only with "//" except header
+ * 2. for JS string you must use \\n to get \n for end of line
+ *
+ * Note: API interface is not localized (except error messages)
+ *
+ * ********************************************************************************************
+ *
+ **/
+ 
 // Define character set of this file (UTF-8 is common value)
 $TLS_STRINGFILE_CHARSET = "UTF-8";
 
+// Last Update of this file
+$TLS_last_update = "Last localization update: 2009/06/01 (Testlink 1.8.2)";
 
 // ----- General terms (used wide) ----------------------------
 $TLS_active = "사용함";
@@ -300,7 +298,7 @@ $TLS_report_tplan_has_no_tcases = "테스트 계획에 연결된 테스트 케�
                                 "실행된 자료가 없습니다. => 보고서를 생성할 수 없습니다";
 
 // ----- tcEdit.php -----
-$TLS_tc_copied = "테스트 케이스 [%s] 가 <br />테스트 스위트 [%s]에 복사 되었습니다.";
+$TLS_tc_copied = "테스트 케이스 [%s] 가 테스트 스위트 [%s]에 복사 되었습니다.";
 $TLS_tc_created = "테스트 케이스 [%s] 가 생성 되었습니다.";
 $TLS_tc_deleted = "테스트 케이스 [%s] 가 삭제 되었습니다.";
 $TLS_tc_updated = "테스트 케이스 [%s] 가 업데이트 되었습니다.";
@@ -450,6 +448,11 @@ $TLS_invalid_query = "에러";
 $TLS_warning = "경고!!";
 $TLS_was_success = " 가 성공적으로 ";
 
+// ----- gui/templates/inc_filter.tpl -----
+$TLS_test_grouped_by = "그룹화 기준 테스트";
+$TLS_mode_test_suite = "테스트 스위트";
+$TLS_mode_req_coverage = "요건";
+$TLS_parent_child_relation = "자녀 양육 관계";
 
 // ----- gui/templates/execNavigator.tpl -----
 $TLS_TestPlan = $TLS_testplan;
@@ -2405,6 +2408,20 @@ $TLS_link_time_charts		= "Time Charts";
 $TLS_time_charts_metrics 	= "Time Charts Metrics";
 $TLS_time_charts_title 		= "Time Charts";
 
-
+// ----- pluginView.php -----       
+$TLS_title_plugins = "undefined";
+$TLS_title_plugin_mgmt = "undefined";
+$TLS_th_plugin = "undefined";
+$TLS_th_plugin_description = "undefined";
+$TLS_th_plugin_version = "undefined";
+$TLS_installed_plugins = "undefined";
+$TLS_available_plugins = "undefined";
+$TLS_plugin_uninstalled = "undefined";
+$TLS_plugin_installed = "undefined";
+$TLS_confirm_install_header = "undefined";
+$TLS_confirm_install_text = "undefined";
+$TLS_confirm_uninstall_header = "undefined";
+$TLS_confirm_uninstall_text = "undefined";
+$TLS_desc_mgt_plugins = "undefined";
 // ----- END ------------------------------------------------------------------
 ?>

@@ -1,34 +1,39 @@
 <?php
-
 /**
-
- * ♔ TestLink Open Source Project - http://testlink.sourceforge.net/ 
-
- * This script is distributed under the GNU General Public License 2 or later. 
-
+ * ♔ TestLink Open Source Project - http://testlink.sourceforge.net/
+ * This script is distributed under the GNU General Public License 2 or later.
  *
-
- * Filename $RCSfile: strings.txt,v $
-
- * @version $Revision: 1.5 $
-
- * @modified $Date: 2010/06/24 17:25:57 $ by $Author: asimon83 $
-
+ * Indonesian (id_ID) strings (en_GB is default development language)
  *
-
- * @author Budi Agus Santoso
-
+ * This list of labels is defined as GLOBAL string variables. The first sections are general
+ * for strings used over all GUI. These definition should not be redefined. Next sections are
+ * related to particular pages. Comment with page filename indicate a begin of section. There
+ * must be defined all other strings.
+ * Do not use html elements in this file.
  *
-
- * Indonesian translation
-
+ * To avoid override of other globals we are using $TLS_ (Test Link String) prefix.
+ * This must be a reserved prefix. The second part of variable name (after
+ * prefix) should indicate usage (warning, title), the third one indicate the page relation
+ * and text at the end.
  *
-
- * Scripted update according en_GB string file (version: 1.399) 
- * ---------------------------------------------------------------------------------- */
+ * ********************************************************************************************
+ * Warning - Warning - Warning - Warning - Warning - Warning - Warning - Warning - Warning
+ * ********************************************************************************************
+ *
+ * 1. Be careful about format - the file is parsed by script	comment only with "//" except header
+ * 2. for JS string you must use \\n to get \n for end of line
+ *
+ * Note: API interface is not localized (except error messages)
+ *
+ * ********************************************************************************************
+ *
+ **/
 
 // Define character set of this file (UTF-8 is common value)
 $TLS_STRINGFILE_CHARSET = "UTF-8";
+
+// Last Update of this file
+$TLS_last_update = "Last localization update: 12/02/2009";
 
 // ----- General terms (used wide) ----------------------------
 $TLS_active 		= "Active";
@@ -312,7 +317,7 @@ $TLS_report_tplan_has_no_tcases = "Test Plan has no Test Cases linked, <br />".
                                 "then no execution data can exist => no report can be created";
 
 // ----- tcEdit.php -----
-$TLS_tc_copied = "Test Case %s was successfully copied to <br /> Test Suite %s";
+$TLS_tc_copied = "Test Case %s was successfully copied to Test Suite %s";
 $TLS_tc_created = "Test Case %s was successfully created";
 $TLS_tc_deleted = "Test Case %s was successfully deleted";
 $TLS_tc_updated = "Test Case %s was successfully updated";
@@ -489,6 +494,11 @@ $TLS_warning = "Warning!!";
 $TLS_was_success = " telah sukses ";
 
 
+// ----- gui/templates/inc_filter.tpl -----
+$TLS_test_grouped_by = "Dikelompokkan dengan uji";
+$TLS_mode_test_suite = "Test Suite";
+$TLS_mode_req_coverage = "Kebutuhan";
+$TLS_parent_child_relation = "Hubungan orangtua anak";
 
 // gui/templates/execNavigator.tpl
 $TLS_TestPlan = "TestPlan";
@@ -2436,7 +2446,7 @@ $TLS_req_msg_noselect = "Tak ada yang dipilih";
 
 $TLS_req_msg_notupdated_coverage = "Cakupan tidak diupdate untuk kebutuhan-kebutuhan: ";
 
-$TLS_bulk_req_assign_msg = 'This operation will assign selected requirements to (maximun number of) %s test cases' .
+$TLS_bulk_req_assign_msg = 'This operation will assign selected requirements to (maximum number of) %s test cases' .
                          '<br>belonging to test suites present on selected branch.';
 $TLS_bulk_assigment_done = '%s assignments has been done';
 $TLS_req_title_bulk_assign = 'Requirements Bulk Assignment';
@@ -2842,6 +2852,20 @@ $TLS_testproject_has_no_requirements = 'There are no Requirements defined';
 $TLS_caption_testCasesWithoutTester = $TLS_link_report_tcases_without_tester;
 $TLS_all_testcases_have_tester = 'All Test Cases have Tester Assigned';
 
-
+// ----- pluginView.php -----       
+$TLS_title_plugins = "undefined";
+$TLS_title_plugin_mgmt = "undefined";
+$TLS_th_plugin = "undefined";
+$TLS_th_plugin_description = "undefined";
+$TLS_th_plugin_version = "undefined";
+$TLS_installed_plugins = "undefined";
+$TLS_available_plugins = "undefined";
+$TLS_plugin_uninstalled = "undefined";
+$TLS_plugin_installed = "undefined";
+$TLS_confirm_install_header = "undefined";
+$TLS_confirm_install_text = "undefined";
+$TLS_confirm_uninstall_header = "undefined";
+$TLS_confirm_uninstall_text = "undefined";
+$TLS_desc_mgt_plugins = "undefined";
 // ----- END ------------------------------------------------------------------
 ?>

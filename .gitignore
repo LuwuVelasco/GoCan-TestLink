@@ -1,35 +1,7 @@
-# Archivos de configuración sensibles
-.env
-.env.local
-.env.*.local
-custom_config.inc.php
-
-# Archivos de sistema operativo
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-
-# Directorios de logs
+.idea/*
+!.idea/tlcode.iml
 logs/
-*.log
-
-# Directorio de carga
-upload_area/*
-!upload_area/.gitkeep
-
-# Cache de Smarty
-gui/templates_c/*
-!gui/templates_c/.gitkeep
-
-# Archivos temporales
-*.tmp
-.vscode/
-.idea/
-
-# Node modules (si se usan)
-node_modules/
-
-# Dependencias de composer (si aplica)
-vendor/
-composer.lock
+config_db.inc.php
+/custom_config.inc.php
+**/._*
+upload_area/**

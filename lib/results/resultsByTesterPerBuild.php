@@ -1,134 +1,145 @@
 <?php
-
 /**
- * 
  * TestLink Open Source Project - http://testlink.sourceforge.net/
  * This script is distributed under the GNU General Public License 2 or later.
  *
- * @package TestLink
- * @author Andreas Simon
- * @copyright 2010, TestLink community
- * @version CVS: $Id: resultsByTesterPerBuild.php,v 1.16 2010/10/19 13:48:38 asimon83 Exp $
+ * @filesource	resultsByTesterPerBuild.php
+ * @package     TestLink
+ * @author      Andreas Simon
+ * @copyright   2010 - 2014 TestLink community
  *
  * Lists results and progress by tester per build.
  * 
- * @internal revisions:
- * 20101019 - asimon - BUGID 3911: show warning message instead of table if table is empty
- * 20100923 - eloff - refactored to use improved table interface
- * 20100923 - Julian - BUGID 3803
- *                   - added status label to status percentage column to be able to reorder columns
- *                     without losing the context
- * 20100823 - asimon - refactoring: $table_id
- * 20100816 - asimon - enable default sorting by progress column
- * 20100731 - asimon - initial commit
- * 		
+ * @internal revisions
+ * @since  1.9.10
+ *
  */
 
 require_once("../../config.inc.php");
 require_once("common.php");
 require_once('exttable.class.php');
-testlinkInitPage($db,false,false,"checkRights");
-
 $templateCfg = templateConfiguration();
-$tproject_mgr = new testproject($db);
-$tplan_mgr = new testplan($db);
+
+list($args,$tproject_mgr,$tplan_mgr) = init_args($db);
 $user = new tlUser($db);
 
-$args = init_args($tproject_mgr, $tplan_mgr);
 $gui = init_gui($args);
 $charset = config_get('charset');
-$results_config = config_get('results');
 
-$progress = new build_progress($db, $args->tplan_id);
-$matrix = $progress->get_results_matrix();
-$status_map = $progress->get_status_map();
-$build_set = $progress->get_build_set();
-$names = $user->getNames($db);
+// By default Only open builds are displayed
+// we will check if we have open builds
+$openBuildsQty = $tplan_mgr->getNumberOfBuilds($args->tplan_id,null,testplan::OPEN_BUILDS);
 
-// build the table header
-$columns = array();
-$columns[] = array('title_key' => 'build', 'width' => 50);
-$columns[] = array('title_key' => 'user', 'width' => 50);
-$columns[] = array('title_key' => 'th_tc_assigned', 'width' => 50);
-
-foreach ($status_map as $status => $code) {
-	$label = $results_config['status_label'][$status];
-	$columns[] = array('title_key' => $label, 'width' => 20);
-	$columns[] = array('title' => lang_get($label).' '.lang_get('in_percent'),
-	                   'col_id' => 'id_'.$label.'_percent',
-	                   'width' => 30);
+// not too wise duplicated code, but effective => Quick & Dirty
+if( $openBuildsQty <= 0 && !$args->show_closed_builds)
+{
+	$gui->warning_message = lang_get('no_open_builds');
+  $gui->tableSet = null;
+	$smarty = new TLSmarty();
+	$smarty->assign('gui',$gui);
+	$smarty->display($templateCfg->template_dir . $templateCfg->default_template);
+	exit();
 }
 
-$columns[] = array('title_key' => 'progress', 'width' => 30);
+
+$metricsMgr = new tlTestPlanMetrics($db);
+$statusCfg = $metricsMgr->getStatusConfig();
+$metrics = $metricsMgr->getStatusTotalsByBuildUAForRender($args->tplan_id,
+                                                          array('processClosedBuilds' => $args->show_closed_builds));
+$matrix = $metrics->info;
+
+// Here need to work, because all queries consider ONLY ACTIVE STATUS
+$option = $args->show_closed_builds ? null : testplan::GET_OPEN_BUILD;
+$build_set = $metricsMgr->get_builds($args->tplan_id, testplan::GET_ACTIVE_BUILD, $option);
+$names = $user->getNames($db);
+
+// get the progress of the whole build based on executions of single users
+$build_statistics = array();
+foreach($matrix as $build_id => $build_execution_map) 
+{
+  $build_statistics[$build_id]['total'] = 0;
+  $build_statistics[$build_id]['executed'] = 0;
+  $build_statistics[$build_id]['total_time'] = 0;
+
+  foreach ($build_execution_map as $user_id => $statistics) 
+  {
+    // total assigned test cases
+    $build_statistics[$build_id]['total'] += $statistics['total'];
+    
+    // total executed testcases
+    $executed = $statistics['total'] - $statistics['not_run']['count']; 
+    $build_statistics[$build_id]['executed'] += $executed;
+
+    $build_statistics[$build_id]['total_time'] += $statistics['total_time'];
+  }
+
+  // build progress
+  $build_statistics[$build_id]['progress'] = round($build_statistics[$build_id]['executed'] / 
+                                                   $build_statistics[$build_id]['total'] * 100,2);
+
+  // We have to fill this if we want time at BUILD LEVEL
+  $build_statistics[$build_id]['total_time'] = minutes2HHMMSS($build_statistics[$build_id]['total_time']);
+}
 
 // build the content of the table
 $rows = array();
 
-foreach ($matrix as $build_id => $build_execution_map) {
-	foreach ($build_execution_map as $user_id => $statistics) {
-		$current_row = array();
-		
-		// add build name to row
-		$current_row[] = $build_set[$build_id]['name'];
-		
-		// add username and link it to tcAssignedToUser.php
-		if ($user_id == TL_NO_USER) {
-			$name = lang_get('executions_without_assignment');
-		} else {
-			$username = $names[$user_id]['login'];
-			$name = "<a href=\"javascript:openAssignmentOverviewWindow(" .
-			        "{$user_id}, {$build_id}, {$args->tplan_id});\">{$username}</a>";
-		}		
-		$current_row[] = $name;
-		
-		// total count of testcases assigned to this user on this build
-		$current_row[] = $statistics['total'];
-		
-		// add count and percentage for each possible status
-		foreach ($status_map as $status => $code) {
-			$current_row[] = $statistics[$status]['count'];
-			
-			//use html comment to allow js sort this column properly
-			$status_percentage = is_numeric($statistics[$status]['percentage']) ? 
-			                     $statistics[$status]['percentage'] : -1;
-			$padded_status_percentage = sprintf("%010d", $status_percentage);
-			$commented_status_percentage = "<!-- $padded_status_percentage --> " .
-			                               "{$statistics[$status]['percentage']}";
-			
-			$current_row[] = $commented_status_percentage;
-		}
-		
-		// add general progress for this user
-		// add html comment with which js can sort the column
-		$percentage = is_numeric($statistics['progress']) ? $statistics['progress'] : -1;
-		$padded_percentage = sprintf("%010d", $percentage); //bring all percentages to same length
-		$commented_progress = "<!-- $padded_percentage --> {$statistics['progress']}";
-		
-		$current_row[] = $commented_progress;
-		
-		// add this row to the others
-		$rows[] = $current_row;
-	}
+$lblx = array('progress_absolute' => lang_get('progress_absolute'),
+              'total_time_hhmmss' => lang_get('total_time_hhmmss') );
+
+foreach ($matrix as $build_id => $build_execution_map) 
+{
+
+  $first_row = $build_set[$build_id]['name'] . " - " . 
+               $lblx['progress_absolute'] . " {$build_statistics[$build_id]['progress']}%" ." - " .
+               $lblx['total_time_hhmmss'].  " {$build_statistics[$build_id]['total_time']}";
+
+  foreach ($build_execution_map as $user_id => $statistics) 
+  {
+    $current_row = array();
+    $current_row[] = $first_row;
+    
+    // add username and link it to tcAssignedToUser.php
+    // $username = $names[$user_id]['login'];
+    $name = "<a href=\"javascript:openAssignmentOverviewWindow(" .
+            "{$user_id}, {$build_id}, {$args->tplan_id});\">{$names[$user_id]['login']}</a>";
+    $current_row[] = $name;
+    
+    // total count of testcases assigned to this user on this build
+    $current_row[] = $statistics['total'];
+    
+    // add count and percentage for each possible status
+    foreach ($statusCfg as $status => $code) 
+    {
+      $current_row[] = $statistics[$status]['count'];
+      $current_row[] = $statistics[$status]['percentage'];
+    }
+    
+    $current_row[] = $statistics['progress'];
+
+    $current_row[] = minutes2HHMMSS($statistics['total_time']);
+    
+    // add this row to the others
+    $rows[] = $current_row;
+  }
 }
 
-// create the table object
-$matrix = new tlExtTable($columns, $rows, 'tl_table_results_by_tester_per_build');
-$matrix->title = lang_get('results_by_tester_per_build');
+$columns = getTableHeader($statusCfg);
+$smartTable = new tlExtTable($columns, $rows, 'tl_table_results_by_tester_per_build');
+$smartTable->title = lang_get('results_by_tester_per_build');
+$smartTable->setGroupByColumnName(lang_get('build'));
 
-//group by build
-$matrix->setGroupByColumnName(lang_get('build'));
-
-// 20100816 - asimon - enable default sorting by progress column
-$matrix->setSortByColumnName(lang_get('progress'));
+// enable default sorting by progress column
+$smartTable->setSortByColumnName(lang_get('progress'));
 
 //define toolbar
-$matrix->showToolbar = true;
-$matrix->toolbarExpandCollapseGroupsButton = true;
-$matrix->toolbarShowAllColumnsButton = true;
+$smartTable->showToolbar = true;
+$smartTable->toolbarExpandCollapseGroupsButton = true;
+$smartTable->toolbarShowAllColumnsButton = true;
 
-$gui->tableSet = array($matrix);
+$gui->tableSet = array($smartTable);
 
-// BUGID 3911: show warning message instead of table if table is empty
+// show warning message instead of table if table is empty
 $gui->warning_message = (count($rows) > 0) ? '' : lang_get('no_testers_per_build');
 
 $smarty = new TLSmarty();
@@ -139,30 +150,77 @@ $smarty->display($templateCfg->template_dir . $templateCfg->default_template);
 /**
  * initialize user input
  * 
- * @param resource &$tproject_mgr reference to testproject manager
+ * @param resource dbHandler
  * @return array $args array with user input information
  */
-function init_args(&$tproject_mgr, &$tplan_mgr) {
-	$iParams = array("format" => array(tlInputParameter::INT_N),
-		             "tplan_id" => array(tlInputParameter::INT_N));
+function init_args(&$dbHandler)
+{
+  $iParams = array("apikey" => array(tlInputParameter::STRING_N,32,64),
+                   "tproject_id" => array(tlInputParameter::INT_N), 
+	                 "tplan_id" => array(tlInputParameter::INT_N),
+                   "format" => array(tlInputParameter::INT_N),
+                   "show_closed_builds" => array(tlInputParameter::CB_BOOL),
+                   "show_closed_builds_hidden" => array(tlInputParameter::CB_BOOL));
 
 	$args = new stdClass();
-	R_PARAMS($iParams,$args);
-    
-	$args->tproject_id = isset($_SESSION['testprojectID']) ? $_SESSION['testprojectID'] : 0;
-	
-	if($args->tproject_id > 0) {
+	$pParams = R_PARAMS($iParams,$args);
+  if( !is_null($args->apikey) )
+  {
+    $cerbero = new stdClass();
+    $cerbero->args = new stdClass();
+    $cerbero->args->tproject_id = $args->tproject_id;
+    $cerbero->args->tplan_id = $args->tplan_id;
+
+    if(strlen($args->apikey) == 32)
+    {
+      $cerbero->args->getAccessAttr = true;
+      $cerbero->method = 'checkRights';
+      $cerbero->redirect_target = "../../login.php?note=logout";
+      setUpEnvForRemoteAccess($dbHandler,$args->apikey,$cerbero);
+    }
+    else
+    {
+      $args->addOpAccess = false;
+      $cerbero->method = null;
+      setUpEnvForAnonymousAccess($dbHandler,$args->apikey,$cerbero);
+    }  
+  }
+  else
+  {
+    testlinkInitPage($dbHandler,false,false,"checkRights");  
+	  $args->tproject_id = isset($_SESSION['testprojectID']) ? intval($_SESSION['testprojectID']) : 0;
+  }
+
+  $tproject_mgr = new testproject($dbHandler);
+  $tplan_mgr = new testplan($dbHandler);
+	if($args->tproject_id > 0) 
+	{
 		$args->tproject_info = $tproject_mgr->get_by_id($args->tproject_id);
 		$args->tproject_name = $args->tproject_info['name'];
 		$args->tproject_description = $args->tproject_info['notes'];
 	}
 	
-	if ($args->tplan_id > 0) {
+	if ($args->tplan_id > 0) 
+	{
 		$args->tplan_info = $tplan_mgr->get_by_id($args->tplan_id);
-		
 	}
 	
-	return $args;
+ 	$selection = false;
+  if($args->show_closed_builds) 
+  {
+  	$selection = true;
+  } 
+  else if ($args->show_closed_builds_hidden) 
+  {
+  	$selection = false;
+  } 
+  else if (isset($_SESSION['reports_show_closed_builds'])) 
+  {
+  	$selection = $_SESSION['reports_show_closed_builds'];
+  }
+  $args->show_closed_builds = $_SESSION['reports_show_closed_builds'] = $selection;
+
+	return array($args,$tproject_mgr,$tplan_mgr);
 }
 
 
@@ -172,23 +230,98 @@ function init_args(&$tproject_mgr, &$tplan_mgr) {
  * @param stdClass $argsObj reference to user input
  * @return stdClass $gui gui data
  */
-function init_gui(&$argsObj) {
+function init_gui(&$argsObj) 
+{
 	$gui = new stdClass();
 	
 	$gui->pageTitle = lang_get('caption_results_by_tester_per_build');
 	$gui->warning_msg = '';
 	$gui->tproject_name = $argsObj->tproject_name;
 	$gui->tplan_name = $argsObj->tplan_info['name'];
-	
+	$gui->show_closed_builds = $argsObj->show_closed_builds;
 	return $gui;
 }
+
+/**
+ * 
+ * 
+ */
+function getTableHeader($statusCfg)
+{
+	$resultsCfg = config_get('results');	
+
+	$colCfg = array();	
+	$colCfg[] = array('title_key' => 'build', 'width' => 50, 
+                    'type' => 'text', 'sortType' => 'asText','filter' => 'string');
+	$colCfg[] = array('title_key' => 'user', 'width' => 50, 
+                    'type' => 'text', 'sortType' => 'asText','filter' => 'string');
+	$colCfg[] = array('title_key' => 'th_tc_assigned', 
+                    'width' => 50, 'sortType' => 'asFloat','filter' => 'numeric');
+
+	foreach ($statusCfg as $status => $code) 
+	{
+		$label = $resultsCfg['status_label'][$status];
+		$colCfg[] = array('title_key' => $label, 'width' => 20, 'sortType' => 'asInt','filter' => 'numeric');
+		$colCfg[] = array('title' => lang_get($label).' '.lang_get('in_percent'),
+		                  'col_id' => 'id_'.$label.'_percent', 'width' => 30, 
+		                  'type' => 'float', 'sortType' => 'asFloat', 'filter' => 'numeric');
+	}
+	
+	$colCfg[] = array('title_key' => 'progress', 'width' => 30, 
+                    'type' => 'float','sortType' => 'asFloat', 'filter' => 'numeric');
+
+  $colCfg[] = array('title' => lang_get('total_time_hhmmss'), 'width' => 30, 
+                    'type' => 'text','sortType' => 'asText', 'filter' => 'string');
+
+	return $colCfg;	                   
+}
+
+/**
+ *
+ * ATTENTION:
+ * because minutes can be a decimal (i.e 131.95) if I use standard operations i can get
+ * wrong results
+ *
+ * 
+ */
+function minutes2HHMMSS($minutes) 
+{
+  // Attention:
+  // $min2sec = $minutes * 60;
+  // doing echo provide expected result, but when using to do more math op
+  // result was wrong, 1 second loss.
+  // Example with 131.95 as input
+  // $min2sec = sprintf('%d',($minutes * 60));
+  $min2sec = bcmul($minutes, 60);
+
+  // From here number will not have decimal => will return to normal operators.
+  // do not know perfomance impacts related to BC* functions
+  $hh = floor($min2sec/3600);
+  $mmss = ($min2sec%3600);
+
+  $mm = floor($mmss/60); 
+  $ss = $mmss%60;
+
+  return sprintf('%02d:%02d:%02d', $hh, $mm, $ss);
+}
+
+
 
 
 /*
  * rights check function for testlinkInitPage()
  */
-function checkRights(&$db, &$user)
+function checkRights(&$db,&$user,$context = null)
 {
-	return $user->hasRight($db,'testplan_metrics');
+  if(is_null($context))
+  {
+    $context = new stdClass();
+    $context->tproject_id = $context->tplan_id = null;
+    $context->getAccessAttr = false; 
+  }
+
+  $check = $user->hasRight($db,'testplan_metrics',$context->tproject_id,$context->tplan_id,$context->getAccessAttr);
+  return $check;
 }
-?>
+
+

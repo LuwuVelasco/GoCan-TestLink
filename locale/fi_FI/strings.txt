@@ -3,35 +3,37 @@
  * ♔ TestLink Open Source Project - http://testlink.sourceforge.net/
  * This script is distributed under the GNU General Public License 2 or later.
  *
- * Finnish (fi_FI) (Finnish localization up to 90%)
+ * Finnish (fi_FI) strings (en_GB is default development language)
  *
- * This list of labels is defined as GLOBAL string variables. The first sections are general 
- * for strings used over all GUI. These definition should not be redefined. Next sections are 
- * related to particular pages. Comment with page filename indicate a begin of section. There 
- * must be defined all other strings. 
+ * This list of labels is defined as GLOBAL string variables. The first sections are general
+ * for strings used over all GUI. These definition should not be redefined. Next sections are
+ * related to particular pages. Comment with page filename indicate a begin of section. There
+ * must be defined all other strings.
+ * Do not use html elements in this file.
  *
  * To avoid override of other globals we are using $TLS_ (Test Link String) prefix.
- * This must be a reserved prefix. The second part of variable name (after 
+ * This must be a reserved prefix. The second part of variable name (after
  * prefix) should indicate usage (warning, title), the third one indicate the page relation
  * and text at the end.
  *
- * Warning: be careful about format - the file is parsed by script
- * Warning: if JS string you must use \\n to get \n for end of line
+ * ********************************************************************************************
+ * Warning - Warning - Warning - Warning - Warning - Warning - Warning - Warning - Warning
+ * ********************************************************************************************
+ *
+ * 1. Be careful about format - the file is parsed by script -> comment only with "//" except header
+ * 2. for JS string you must use \\n to get \n for end of line
+ *
  * Note: API interface is not localized (except error messages)
- * 
- * @package 	TestLink
- * @author 		Kirsi Mäkinen, Jan-Erik Finlander, Juho Kauppi
- * @author 		Heikki Alonen, Jari Ahonen, Otto Moilanen
- * @copyright 	2003-2009, TestLink community 
- * @version    	CVS: $Id: strings.txt,v 1.4 2010/06/24 17:25:55 asimon83 Exp $
- * @link 		http://www.teamst.org/index.php
- * 
- * 
- * 
- */
+ *
+ * ********************************************************************************************
+ *
+ **/
 
 // Define character set of this file (UTF-8 is common value)
 $TLS_STRINGFILE_CHARSET = "UTF-8";
+
+// Last Update of this file
+$TLS_last_update = "Last localization update: 17/06/2009 (Testlink 1.8.2)";
 
 //----- General terms (used wide) ----------------------------
 $TLS_active = "Aktiivinen";
@@ -279,7 +281,7 @@ $TLS_report_tplan_has_no_tcases = "Testaussuunnitelmalla ei ole yhteyttä testit
 "//suoritusdataa ei siten esiinny// //=>// //raporttia ei voida luoda//";//
 
 //----- tcEdit.php -----
-$TLS_tc_copied = "Testitapaus %s onnistui kopioida <br/> testitapausjaksoon %s";
+$TLS_tc_copied = "Testitapaus %s onnistui kopioida testitapausjaksoon %s";
 $TLS_tc_created = "Testitapaus %s luominen onnistui";
 $TLS_tc_deleted = "Testitapaus %s poistaminen onnistui";
 $TLS_tc_updated = "Testitapaus %s päivittäminen onnistui";
@@ -412,6 +414,12 @@ $TLS_info_failed_db_upd_details = "Tietokannan päivittäminen epäonnistui! - t
 $TLS_invalid_query = "Virhe";
 $TLS_warning = "Varoitus!!!";
 $TLS_was_success = " onnistui ";
+
+// ----- gui/templates/inc_filter.tpl -----
+$TLS_test_grouped_by = "Ryhmitelty testi";
+$TLS_mode_test_suite = "Testitapausjakso";
+$TLS_mode_req_coverage = "Vaatimus";
+$TLS_parent_child_relation = "Vanhempi lapsisuhde";
 
 //----- gui/templates/execNavigator.tpl -----
 $TLS_TestPlan = $TLS_testplan;
@@ -1730,7 +1738,7 @@ $TLS_req_created = "Requirement %s was successfully created";
 //----- lib/req/reqTcAssign.php -----
 $TLS_req_msg_noselect = "Nothing selected";
 $TLS_req_msg_notupdated_coverage = "Coverage was not updated for Requirements ";
-$TLS_bulk_req_assign_msg = 'This operation will assign selected requirements to (maximun number of) %s test cases' .
+$TLS_bulk_req_assign_msg = 'This operation will assign selected requirements to (maximum number of) %s test cases' .
 '<br/>belonging to test suites present on selected branch.';
 $TLS_bulk_assigment_done = '%s assignments has been done';
 $TLS_req_title_bulk_assign = 'Requirements Bulk Assignment';
@@ -2106,5 +2114,20 @@ $TLS_link_time_charts = "Time Charts";
 $TLS_time_charts_metrics = "Time Charts Metrics";
 $TLS_time_charts_title = "Time Charts";
 
+// ----- pluginView.php -----       
+$TLS_title_plugins = "undefined";
+$TLS_title_plugin_mgmt = "undefined";
+$TLS_th_plugin = "undefined";
+$TLS_th_plugin_description = "undefined";
+$TLS_th_plugin_version = "undefined";
+$TLS_installed_plugins = "undefined";
+$TLS_available_plugins = "undefined";
+$TLS_plugin_uninstalled = "undefined";
+$TLS_plugin_installed = "undefined";
+$TLS_confirm_install_header = "undefined";
+$TLS_confirm_install_text = "undefined";
+$TLS_confirm_uninstall_header = "undefined";
+$TLS_confirm_uninstall_text = "undefined";
+$TLS_desc_mgt_plugins = "undefined";
 //-----   END ------------------------------------------------------------------
 ?>

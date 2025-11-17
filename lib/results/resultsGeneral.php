@@ -3,265 +3,147 @@
  * TestLink Open Source Project - http://testlink.sourceforge.net/ 
  * This script is distributed under the GNU General Public License 2 or later.
  * 
- * @filesource $RCSfile: resultsGeneral.php,v $
- * @version $Revision: 1.71 $
- * @modified $Date: 2010/10/18 22:55:29 $ by $Author: erikeloff $
- * @author	Martin Havlat <havlat at users.sourceforge.net>
+ * @filesource resultsGeneral.php
  * 
- * Show Test Results over all Builds.
- *
- * Revisions:
- *  20101018 - Julian - BUGID 2236 - Milestones Report broken - removed useless code
- *  20100811 - asimon - removed "results by assigned testers" table,
- *                      was replaced by new report "results by tester per build"
- *  20100621 - eloff - BUGID 3542 - fixed typo
- *  20100206 - eloff - BUGID 3060 - Show verbose priority statistics like other tables.
- *  20100201 - franciscom - BUGID 0003123: General Test Plan Metrics - order of columns
- *                                         with test case exec results
- *  20091103 - franciscom - keywords, assigned testers, platform results refactored,
- *                          noew use method from test plan class.
- *
- *  20090209 - franciscom - BUGID 2080
- *  20080928 - franciscom - removed useless requires
- * 	20050807 - fm - refactoring:  changes in getTestSuiteReport() call
- * 	20050905 - fm - reduce global coupling
- *  20070101 - KL - upgraded to 1.7
- * 	20080626 - mht - added milestomes, priority report, refactorization
- * 
- * ----------------------------------------------------------------------------------- */
+ */
 require('../../config.inc.php');
+
+// Must be included BEFORE common.php
+require_once('../../third_party/codeplex/PHPExcel.php');
+
 require_once('common.php');
-require_once('results.class.php');
 require_once('displayMgr.php');
-testlinkInitPage($db,true,false,"checkRights");
 
+$timerOn = microtime(true);
+$tplCfg = templateConfiguration();
 
-$tplan_mgr = new testplan($db);
-$tproject_mgr = new testproject($db);
-$templateCfg = templateConfiguration();
-
-$args = init_args();
-$tplan_info = $tplan_mgr->get_by_id($args->tplan_id);
-$tproject_info = $tproject_mgr->get_by_id($args->tproject_id);
-
-$arrDataSuite = array();
-
-$gui = new stdClass();
-$gui->title = lang_get('title_gen_test_rep');
-$gui->do_report = array();
-$gui->showPlatforms=true;
-$gui->columnsDefinition = new stdClass();
-$gui->columnsDefinition->keywords = null;
-$gui->columnsDefinition->testers = null;
-$gui->columnsDefinition->platform = null;
-$gui->statistics = new stdClass();
-$gui->statistics->keywords = null;
-$gui->statistics->testers = null;
-$gui->statistics->milestones = null;
-$gui->tplan_name = $tplan_info['name'];
-$gui->tproject_name = $tproject_info['name'];
-
-$mailCfg = buildMailCfg($gui);
-
-$getOpt = array('outputFormat' => 'map');
-$gui->platformSet = $tplan_mgr->getPlatforms($args->tplan_id,$getOpt);
-if( is_null($gui->platformSet) )
-{
-	$gui->platformSet = array('');
-	$gui->showPlatforms=false;
+list($tplan_mgr,$args) = initArgsForReports($db);
+if( null == $tplan_mgr ) {
+  $tplan_mgr = new testplan($db);
 }
 
+$gui = initializeGui($db,$args,$tplan_mgr);
+$mailCfg = buildMailCfg($gui);
 $metricsMgr = new tlTestPlanMetrics($db);
 
-$re = new results($db, $tplan_mgr, $tproject_info, $tplan_info,ALL_TEST_SUITES,ALL_BUILDS,ALL_PLATFORMS);
-// ----------------------------------------------------------------------------
-$topLevelSuites = $re->getTopLevelSuites();
 
-if(is_null($topLevelSuites))
-{
+$tsInf = $metricsMgr->getStatusTotalsByTopLevelTestSuiteForRender($args->tplan_id,null,array('groupByPlatform' => 1));
+
+if(is_null($tsInf)) {
 	// no test cases -> no report
 	$gui->do_report['status_ok'] = 0;
 	$gui->do_report['msg'] = lang_get('report_tspec_has_no_tsuites');
 	tLog('Overall Metrics page: no test cases defined');
-}
-else // do report
-{
+} else {
+
+	// do report
+	$gui->statistics->testsuites = $tsInf->info;
 	$gui->do_report['status_ok'] = 1;
 	$gui->do_report['msg'] = '';
 
-	//$items2loop = array('keywords','assigned_testers');
-	$items2loop = array('keywords');
-	
-	$kwr = $tplan_mgr->getStatusTotalsByKeyword($args->tplan_id);
-    $gui->statistics->keywords = $tplan_mgr->tallyResultsForReport($kwr);
 
-//    $usr=$tplan_mgr->getStatusTotalsByAssignedTester($args->tplan_id);
-//    $gui->statistics->assigned_testers = $tplan_mgr->tallyResultsForReport($usr);
+  $keywordsMetrics = 
+    $metricsMgr->getStatusTotalsByKeywordForRender($args->tplan_id,null, array('groupByPlatform' => 1) );
 
-	if( $gui->showPlatforms )
-	{
+	$gui->statistics->keywords = !is_null($keywordsMetrics) ? $keywordsMetrics->info : null; 
+                              
+	if( $gui->showPlatforms ) {
 		$items2loop[] = 'platform';
-		$platr = $tplan_mgr->getStatusTotalsByPlatform($args->tplan_id);
-		$gui->statistics->platform = $tplan_mgr->tallyResultsForReport($platr);
-	}
-	if($_SESSION['testprojectOptions']->testPriorityEnabled)
-	{
-		$items2loop[] = 'priorities';
-		$prios = $tplan_mgr->getStatusTotalsByPriority($args->tplan_id);
-		$gui->statistics->priorities = $tplan_mgr->tallyResultsForReport($prios);
+		$platformMetrics = $metricsMgr->getStatusTotalsByPlatformForRender($args->tplan_id);
+		$gui->statistics->platform = !is_null($platformMetrics) ? $platformMetrics->info : null; 
 	}
 
-	foreach($items2loop as $item)
-	{
-      	if( !is_null($gui->statistics->$item) )
-      	{
-        	// Get labels
-          	$dummy = current($gui->statistics->$item);
-          	foreach($dummy['details'] as $status_verbose => $value)
-          	{
-              	$dummy['details'][$status_verbose]['qty'] = 
-              			lang_get($tlCfg->results['status_label'][$status_verbose]);
-            	$dummy['details'][$status_verbose]['percentage'] = "[%]";
-            }
-          	$gui->columnsDefinition->$item = $dummy['details'];
-         } 
-  	} 
+	if($gui->testprojectOptions->testPriorityEnabled) {
+		$filters = null;
+		$opt = array('getOnlyAssigned' => false, 
+                 'groupByPlatform' => 1);
+		$priorityMetrics = $metricsMgr->getStatusTotalsByPriorityForRender($args->tplan_id,$filters,$opt);
+		$gui->statistics->priorities = !is_null($priorityMetrics) ? $priorityMetrics->info : null; 
+	}
 
-  	$mapOfAggregate = $re->getAggregateMap();
-  	$arrDataSuite = null;
-  	$arrDataSuiteIndex = 0;
 
-	// collect data for top test suites and users  
-  	if (is_array($topLevelSuites)) 
-  	{
-      	foreach($topLevelSuites as $key => $suiteNameID)
-      	{
-      		$results = $mapOfAggregate[$suiteNameID['id']];
-      			
-      		$element['tsuite_name'] = $suiteNameID['name'];
-      		$element['total_tc'] = $results['total'];
-      		$element['percentage_completed'] = get_percentage($results['total'], 
-      		$results['total'] - $results['not_run']);
+	foreach($items2loop as $item) {
+    if( !is_null($gui->statistics->$item) ) {
+      $gui->columnsDefinition->$item = array();
+      
+     	// Get labels
+     	$dummy = current($gui->statistics->$item);
+     	if(isset($dummy['details'])) {  
+        foreach($dummy['details'] as $status_verbose => $value) {
+          $dummy['details'][$status_verbose]['qty'] = lang_get($tlCfg->results['status_label'][$status_verbose]);
+          $dummy['details'][$status_verbose]['percentage'] = "[%]";
+        }
+        $gui->columnsDefinition->$item = $dummy['details'];
+      }
+    }
+  } 
 
-        	unset($results['total']);
-        	foreach($results as $key => $value)
-        	{
-      	    	$element['details'][$key]['qty'] = $results[$key];
-      		}
-      		$element['details']['not_run']['qty'] = $results['not_run'];
-      	   
-      		$arrDataSuite[$arrDataSuiteIndex] = $element;
-      		$arrDataSuiteIndex++;
-      	} 
+  $doubleItemToLoop = array('priorities','keywords','testsuites');
+  foreach( $doubleItemToLoop as $item ) {
+    if( !is_null($gui->statistics->$item) ) {
+      $gui->columnsDefinition->$item = array();
+   
+      // Get labels
+      // !!double current because main key is PLATFORM
+      $dummy = current(current($gui->statistics->$item));
+      if(isset($dummy['details'])) {  
+        foreach($dummy['details'] as $status_verbose => $value) {
+          $dummy['details'][$status_verbose]['qty'] = lang_get($tlCfg->results['status_label'][$status_verbose]);
+          $dummy['details'][$status_verbose]['percentage'] = "[%]";
+        }
+        $gui->columnsDefinition->$item = $dummy['details'];
+      }
+    }    
+  }
 
-    	$gui->statistics->testsuites = $arrDataSuite;
 
-      	// Get labels
-    	$dummy = current($gui->statistics->testsuites);
-      	foreach($dummy['details'] as $status_verbose => $value)
-    	{
-          	$dummy['details'][$status_verbose]['qty'] = 
-          			lang_get($tlCfg->results['status_label'][$status_verbose]);
-      	}
-      	$gui->columnsDefinition->testsuites = $dummy['details'];
-  	}
-
-	// ----------------------------------------------------------------------------
-  	/* BUILDS REPORT */
-    // $buildSet = $tplan_mgr->get_builds($args->tplan_id); //,testplan::ACTIVE_BUILDS);
-    // 
-    // 
-    // $filters=null;
-    // $options=array('output' => 'array' , 'last_execution' => true, 'only_executed' => true, 'execution_details' => 'add_build');
-    // $myRBB = $tplan_mgr->get_linked_tcversions($args->tplan_id,$filters,$options);
-    // $loop2do=count($myRBB);
-    // $code_verbose=$tplan_mgr->getStatusForReports();
-    // foreach($buildSet as $key => $elem )
-    // {
-    // 	foreach($code_verbose as $code => $verbose)
-    // 	{
-    // 		$buildResults[$key][$code]=0;		
-    // 	}	
-    // }
-    // 
-    // for($idx=0; $idx < $loop2do; $idx++)
-    // {
-    // 	$buildID=$myRBB[$idx]['build_id'];
-    // 	$exec_status=$myRBB[$idx]['exec_status'];
-    // 	$buildResults[$buildID][$exec_status]++;
-    // 	// $buildResults[$buildID]	
-    // }  
-    // 
-    // foreach($buildResults as $key => $value)
-    // {
-    // 
-    // }
-    //      
-    // new dBug($buildResults);
-    // 
-    // new dBug($options);
-    // new dBug($myRBB);
-    // 
-	// $results = $re->getAggregateBuildResults();
-    // new dBug($results);    
-    
-
+ 	/* BUILDS REPORT */
 	$colDefinition = null;
 	$results = null;
-	if($gui->do_report['status_ok'])
-	{
-  		$results = $re->getAggregateBuildResults();
-  		if ($results != null) 
-  		{
-			// BUGID 0003123: General Test Plan Metrics - order of columns with test case exec results
-			$code_verbose = $tplan_mgr->getStatusForReports();
-      		$resultsCfg = config_get('results');
-      		$labels = $resultsCfg['status_label'];
-      		foreach($code_verbose as $status_verbose)
-      		{
-            	$l18n_label = isset($labels[$status_verbose]) ? lang_get($labels[$status_verbose]) : 
-                              lang_get($status_verbose); 
-            
-            	$colDefinition[$status_verbose]['qty'] = $l18n_label;
-            	$colDefinition[$status_verbose]['percentage'] = '[%]';
-      		}
-  		}    
+	if($gui->do_report['status_ok']) {
+		
+    $o = $metricsMgr->getOverallBuildStatusForRender($args->tplan_id);
+    $gui->statistics->overallBuildStatus = $o->info;
+    $gui->columnsDefinition->overallBuildStatus = $o->colDefinition;
+		$gui->displayBuildMetrics = !is_null($gui->statistics->overallBuildStatus);
 	}  
+
+  // Build by Platform
+  $colDefinition = null;
+  $results = null;
+  if($gui->do_report['status_ok']) {     
+    $o = $metricsMgr->getBuildByPlatStatusForRender($args->tplan_id);
+
+    $gui->statistics->buildByPlatMetrics = new stdClass();
+    $gui->statistics->buildByPlatMetrics = $o->info; 
+    $gui->columnsDefinition->buildByPlatMetrics = $o->colDefinition;
+
+    $gui->displayBuildByPlatMetrics = 
+      !is_null($gui->statistics->buildByPlatMetrics); 
+  }  
 
 
 	
-  	/* MILESTONE & PRIORITY REPORT */
-	/* what is this ?
-    $planMetrics = $tplan_mgr->getStatusTotals($args->tplan_id);
-
-	$filters=null;
-	$options=array('output' => 'map', 'only_executed' => true, 'execution_details' => 'add_build');
-    $execResults = $tplan_mgr->get_linked_tcversions($args->tplan_id,$filters,$options);
-
-    $options=array('output' => 'mapOfArray', 'only_executed' => true, 'execution_details' => 'add_build');
-    $execResults = $tplan_mgr->get_linked_tcversions($args->tplan_id,$filters,$options);
-    
-    $options=array('output' => 'mapOfMap', 'only_executed' => true, 'execution_details' => 'add_build');
-    $execResults = $tplan_mgr->get_linked_tcversions($args->tplan_id,$filters,$options);
-    
-    $options=array('output' => 'array', 'only_executed' => true, 'execution_details' => 'add_build');
-    $execResults = $tplan_mgr->get_linked_tcversions($args->tplan_id,$filters,$options);
-    */
-   
-
+  /* MILESTONE & PRIORITY REPORT */
+  // Need to be refactored ???
 	$milestonesList = $tplan_mgr->get_milestones($args->tplan_id);
-	if (!empty($milestonesList))
-	{
+	if (!empty($milestonesList)) {
 		$gui->statistics->milestones = $metricsMgr->getMilestonesMetrics($args->tplan_id,$milestonesList);
-    }
+  }
+
 } 
 
-// ----------------------------------------------------------------------------
+$timerOff = microtime(true);
+$gui->elapsed_time = round($timerOff - $timerOn,2);
+
+if( $args->spreadsheet ) {
+  createSpreadsheet($gui,$args,$tplan_mgr);
+}
+
+
 $smarty = new TLSmarty;
 $smarty->assign('gui', $gui);
-$smarty->assign('buildColDefinition', $colDefinition);
-$smarty->assign('buildResults',$results);
-displayReport($templateCfg->template_dir . $templateCfg->default_template, $smarty, $args->format,$mailCfg);
+displayReport($tplCfg->tpl, $smarty, $args->format,$mailCfg);
 
 
 
@@ -270,56 +152,65 @@ displayReport($templateCfg->template_dir . $templateCfg->default_template, $smar
   args: none
   returns: array 
 */
-function init_args()
-{
-	$iParams = array(
-		"tplan_id" => array(tlInputParameter::INT_N),
-		"format" => array(tlInputParameter::INT_N),
-	);
+function init_args(&$dbHandler) {
+  $tplanMgr = null;
+  $iParams = array("apikey" => array(tlInputParameter::STRING_N,32,64),
+                   "tproject_id" => array(tlInputParameter::INT_N), 
+	                 "tplan_id" => array(tlInputParameter::INT_N),
+                   "format" => array(tlInputParameter::INT_N),
+                   "sendByMail" => array(tlInputParameter::INT_N),
+                   "spreadsheet" => array(tlInputParameter::INT_N));
 
 	$args = new stdClass();
 	$pParams = G_PARAMS($iParams,$args);
-	
-    $args->tproject_id = $_SESSION['testprojectID'];
+
+  $args->spreadsheet = intval($args->spreadsheet);
+  if( !is_null($args->apikey) ) {
+    $cerbero = new stdClass();
+    $cerbero->args = new stdClass();
+    $cerbero->args->tproject_id = $args->tproject_id;
+    $cerbero->args->tplan_id = $args->tplan_id;
     
-    if (is_null($args->format))
-	{
+    if(strlen($args->apikey) == 32) {
+      $cerbero->args->getAccessAttr = true;
+      $cerbero->method = 'checkRights';
+      $cerbero->redirect_target = "../../login.php?note=logout";
+      setUpEnvForRemoteAccess($dbHandler,$args->apikey,$cerbero);
+    } else {
+      $args->addOpAccess = false;
+      $cerbero->method = null;
+      setUpEnvForAnonymousAccess($dbHandler,$args->apikey,$cerbero);
+    }  
+  } else {
+    testlinkInitPage($dbHandler,true,false,"checkRights");
+
+    $tplanMgr = new testplan($dbHandler);
+    $tplan = $tplanMgr->get_by_id($args->tplan_id);
+	  $args->tproject_id = $tplan['testproject_id'];
+  }
+
+  if($args->tproject_id <= 0) {
+  	$msg = __FILE__ . '::' . __FUNCTION__ . " :: Invalid Test Project ID ({$args->tproject_id})";
+  	throw new Exception($msg);
+  }
+
+  if (is_null($args->format)) {
 		tlog("Parameter 'format' is not defined", 'ERROR');
 		exit();
 	}
-
-    return $args;
-}
-
-/**
- * calculate percentage and format
- * 
- * @param int $total Total count
- * @param int $parameter a parameter count
- * @return string formatted percentage
- */
-function get_percentage($total, $parameter)
-{
-    if ($total > 0) 
-   		$percentCompleted = ($parameter / $total) * 100;
-	else 
-   		$percentCompleted = 0;
-
-	return number_format($percentCompleted,1);
 	
+	$args->user = $_SESSION['currentUser'];
+  $args->format = $args->sendByMail ? FORMAT_MAIL_HTML : $args->format;
+
+  return array($tplanMgr,$args);
 }
 
-function checkRights(&$db,&$user)
-{
-	return $user->hasRight($db,'testplan_metrics');
-}
 
 /**
  * 
  *
  */
-function buildMailCfg(&$guiObj)
-{
+function buildMailCfg(&$guiObj) {
 	$labels = array('testplan' => lang_get('testplan'), 'testproject' => lang_get('testproject'));
 	$cfg = new stdClass();
 	$cfg->cc = ''; 
@@ -328,4 +219,433 @@ function buildMailCfg(&$guiObj)
 	                 
 	return $cfg;
 }
-?>
+
+/**
+ *
+ */
+function initializeGui(&$dbHandler,$argsObj,&$tplanMgr) {
+  $gui = new stdClass();
+  $gui->fakePlatform = array('');
+  $gui->title = lang_get('title_gen_test_rep');
+  $gui->do_report = array();
+  $gui->showPlatforms=true;
+  $gui->columnsDefinition = new stdClass();
+  $gui->columnsDefinition->keywords = null;
+  $gui->columnsDefinition->testers = null;
+  $gui->columnsDefinition->platform = null;
+  $gui->statistics = new stdClass();
+  $gui->statistics->keywords = null;
+  $gui->statistics->testers = null;
+  $gui->statistics->milestones = null;
+  $gui->statistics->overalBuildStatus = null;
+  $gui->elapsed_time = 0; 
+  $gui->displayBuildMetrics = false;
+  $gui->buildMetricsFeedback = lang_get('buildMetricsFeedback');
+
+  $mgr = new testproject($dbHandler);
+  $dummy = $mgr->get_by_id($argsObj->tproject_id);
+  $gui->testprojectOptions = new stdClass();
+  $gui->testprojectOptions->testPriorityEnabled = $dummy['opt']->testPriorityEnabled;
+  $gui->tproject_name = $dummy['name'];
+
+  $info = $tplanMgr->get_by_id($argsObj->tplan_id);
+  $gui->tplan_name = $info['name'];
+  $gui->tplan_id = intval($argsObj->tplan_id);
+
+  $gui->platformSet = $tplanMgr->getPlatforms($argsObj->tplan_id,array('outputFormat' => 'map'));
+  if( is_null($gui->platformSet) ) {
+  	$gui->platformSet = array('');
+  	$gui->showPlatforms = false;
+  } else {
+    natsort($gui->platformSet);
+  }
+
+  $gui->basehref = $_SESSION['basehref'];
+  $gui->actionSendMail = $gui->basehref . 
+          "lib/results/resultsGeneral.php?format=" . 
+          FORMAT_MAIL_HTML . "&tplan_id={$gui->tplan_id}"; 
+
+  $gui->actionSpreadsheet = $gui->basehref . 
+          "lib/results/resultsGeneral.php?format=" . 
+          FORMAT_XLS . "&tplan_id={$gui->tplan_id}&spreadsheet=1";
+
+
+  $gui->mailFeedBack = new stdClass();
+  $gui->mailFeedBack->msg = '';
+  return $gui;
+}
+
+
+/**
+ *
+ *
+ */
+function createSpreadsheet($gui,$args,&$tplanMgr) {
+
+  // N sections
+  // Always same format
+  // Platform 
+  // Build Assigned Not Run [%] Passed [%] Failed [%] Blocked [%]
+  //                Completed [%]
+
+  // Results by Platform
+  // Overall Build Status
+  // Results by Build
+  // Results by Top Level Test Suite
+  // Results by priority
+  // Results by Keyword
+
+
+  $lbl = initLblSpreadsheet();
+  $cellRange = setCellRangeSpreadsheet();
+  $style = initStyleSpreadsheet();
+
+  // Common
+  $execStatusDomain = $tplanMgr->getStatusForReports();
+  $dataHeaderMetrics = array();
+  // $cellPosForExecStatus = array();
+  $ccc = 0;
+  foreach( $execStatusDomain as $code => $human ) {
+    $dataHeaderMetrics[] = lang_get('test_status_' . $human);
+    $ccc++;    
+    $dataHeaderMetrics[] = '[%]';
+    $ccc++;    
+    //$cellPosForExecStatus[$human] = $ccc;
+  }
+  $dataHeaderMetrics[] = $lbl['completed_perc'];
+
+  $objPHPExcel = new PHPExcel();
+  $lines2write = xlsStepOne($objPHPExcel,$style,$lbl,$gui);
+
+  $oneLevel = array();
+
+  // NO PLATFORM => ID=0
+  $hasPlatforms = count($gui->platformSet) >= 1 && 
+                  !isset($gui->platformSet[0]);
+  if( $hasPlatforms ) {
+    $oneLevel[] = array('entity' => 'platform', 
+                        'dimension' => 'testcase_qty',
+                        'nameKey' => 'name', 'tcQtyKey' => 'total_tc',
+                        'source' => &$gui->statistics->platform);
+  }
+
+  $oneLevel[] = array('entity' => 'build', 'dimension' => 'testcase_qty',
+                      'nameKey' => 'build_name', 
+                      'tcQtyKey' => 'total_assigned',
+                      'source' => &$gui->statistics->overallBuildStatus);
+
+  $startingRow = count($lines2write); // MAGIC
+  foreach( $oneLevel as $target ) {
+    $entity = $target['entity'];
+    $dimension = $target['dimension'];
+    $dataHeader = array($lbl[$entity],$lbl[$dimension]);
+
+    // intermediate column qty is dynamic because it depends
+    // of status configuration.
+    foreach( $dataHeaderMetrics as $val ) {
+      $dataHeader[] = $val;
+    }
+  
+    $startingRow++;
+    $startingRow++;
+    $cellArea = "A{$startingRow}:";
+    foreach($dataHeader as $zdx => $field) {
+      $cellID = $cellRange[$zdx] . $startingRow; 
+      $objPHPExcel->setActiveSheetIndex(0)->setCellValue($cellID, $field);
+      $cellAreaEnd = $cellRange[$zdx];
+    }
+    $cellArea .= "{$cellAreaEnd}{$startingRow}";
+    $objPHPExcel->getActiveSheet()
+              ->getStyle($cellArea)
+              ->applyFromArray($style['DataHeader']);  
+
+    $startingRow++;
+    $infoSet = $target['source'];
+    $nameKey = $target['nameKey'];
+    $tcQtyKey = $target['tcQtyKey'];
+
+    foreach($infoSet as $itemID => $fieldSet) {
+
+      $whatCell = 0;
+      $cellID = $cellRange[$whatCell] . $startingRow; 
+      $field = $fieldSet[$nameKey];
+      $objPHPExcel->setActiveSheetIndex(0)->setCellValue($cellID, $field);
+
+      $whatCell++;
+      $cellID = $cellRange[$whatCell] . $startingRow; 
+      $field = $fieldSet[$tcQtyKey];
+      $objPHPExcel->setActiveSheetIndex(0)->setCellValue($cellID, $field);
+
+      foreach($fieldSet['details'] as $human => $metrics) {
+        $whatCell++;        
+        $cellID = $cellRange[$whatCell] . $startingRow; 
+        $objPHPExcel->setActiveSheetIndex(0)
+                    ->setCellValue($cellID, $metrics['qty']);
+
+        $whatCell++;
+        $cellID = $cellRange[$whatCell] . $startingRow; 
+        $objPHPExcel->setActiveSheetIndex(0)
+                    ->setCellValue($cellID, $metrics['percentage']);
+      }
+      $whatCell++;
+      $cellID = $cellRange[$whatCell] . $startingRow; 
+      $objPHPExcel->setActiveSheetIndex(0)
+                  ->setCellValue($cellID, 
+                       $fieldSet['percentage_completed']);
+      $startingRow++;
+    }
+  }
+
+  // The first column will be the platform
+  $twoLevels = array();
+
+  if( $hasPlatforms ) {
+    $twoLevels[] = 
+      array('entity' => 'build', 'dimension' => 'testcase_qty',
+            'nameKey' => 'build_name', 
+            'tcQtyKey' => 'total_assigned',
+            'source' => &$gui->statistics->buildByPlatMetrics);
+  }
+
+  $twoLevels[] = 
+    array('entity' => 'testsuite', 'dimension' => 'testcase_qty',
+          'nameKey' => 'name', 
+          'tcQtyKey' => 'total_tc',
+          'source' => &$gui->statistics->testsuites);
+
+  $twoLevels[] = array('entity' => 'priority', 
+                       'dimension' => 'testcase_qty',
+                       'nameKey' => 'name', 'tcQtyKey' => 'total_tc',
+                       'source' => &$gui->statistics->priorities);
+
+  $twoLevels[] = 
+    array('entity' => 'keyword', 'dimension' => 'testcase_qty',
+          'nameKey' => 'name', 
+          'tcQtyKey' => 'total_tc',
+          'source' => &$gui->statistics->keywords);
+
+  foreach( $twoLevels as $target ) {
+    $startingRow++;
+    $startingRow++;
+
+    $entity = $target['entity'];
+    $dimension = $target['dimension'];
+    $nameKey = $target['nameKey'];
+    $tcQtyKey = $target['tcQtyKey'];
+
+    if( count($target['source']) == 0 ) {
+      continue;
+    }
+
+    // Just ONE HEADER ?
+    $dataHeader = array($lbl['platform'],$lbl[$entity],$lbl[$dimension]);
+    if( $hasPlatforms == false ) {
+      array_shift($dataHeader);      
+    }
+
+    // intermediate column qty is dynamic because it depends
+    // of status configuration.
+    foreach( $dataHeaderMetrics as $val ) {
+      $dataHeader[] = $val;
+    }
+  
+    $cellArea = "A{$startingRow}:";
+    foreach($dataHeader as $zdx => $field) {
+      $cellID = $cellRange[$zdx] . $startingRow; 
+      $objPHPExcel->setActiveSheetIndex(0)->setCellValue($cellID, $field);
+      $cellAreaEnd = $cellRange[$zdx];
+    }
+    $cellArea .= "{$cellAreaEnd}{$startingRow}";
+    $objPHPExcel->getActiveSheet()
+                ->getStyle($cellArea)
+                ->applyFromArray($style['DataHeader']);  
+    // END ONE HEADER
+    $startingRow++;
+
+    $idr = '';
+    foreach( $gui->platformSet as $platID => $platName ) {
+      $idr = ('' == $idr || 'rowB' == $idr ) ? 'rowA' : 'rowB';
+
+      $infoSet = isset($target['source'][$platID]) ? 
+                 $target['source'][$platID] : array();
+
+      foreach($infoSet as $itemID => $fieldSet) {
+        $whatCell=0;
+        
+        if( $hasPlatforms ) {
+          $cellID = $cellRange[$whatCell] . $startingRow; 
+          $field = $platName;
+          $objPHPExcel->setActiveSheetIndex(0)->setCellValue($cellID, $field);          
+          
+          $whatCell++;
+        }
+
+        $cellID = $cellRange[$whatCell] . $startingRow; 
+        $field = $fieldSet[$nameKey];
+        $objPHPExcel->setActiveSheetIndex(0)->setCellValue($cellID, $field);
+
+        $whatCell++;
+        $cellID = $cellRange[$whatCell] . $startingRow; 
+        $field = $fieldSet[$tcQtyKey];
+        $objPHPExcel->setActiveSheetIndex(0)->setCellValue($cellID, $field);
+
+        foreach($fieldSet['details'] as $human => $metrics) {
+          $whatCell++;
+          $cellID = $cellRange[$whatCell] . $startingRow; 
+          $objPHPExcel->setActiveSheetIndex(0)
+                      ->setCellValue($cellID, $metrics['qty']);
+
+          $whatCell++;
+          $cellID = $cellRange[$whatCell] . $startingRow; 
+          $objPHPExcel->setActiveSheetIndex(0)
+                      ->setCellValue($cellID, $metrics['percentage']);
+        }
+        $whatCell++;
+        $cellID = $cellRange[$whatCell] . $startingRow; 
+        $objPHPExcel->setActiveSheetIndex(0)
+                    ->setCellValue($cellID, 
+                         $fieldSet['percentage_completed']);
+        
+        $cellZone = "A{$startingRow}:" . $cellRange[$whatCell] . 
+                    "$startingRow";
+
+        $objPHPExcel->getActiveSheet()
+                    ->getStyle($cellZone)
+                    ->applyFromArray($style[$idr]);  
+
+        $startingRow++;
+      }
+    }   
+  } // on container ? 
+
+  // Just to add some final empty row
+  $cellID = $cellRange[0] . $startingRow; 
+  $field = '';
+  $objPHPExcel->setActiveSheetIndex(0)->setCellValue($cellID, $field);          
+
+
+
+  // Final step
+  $tmpfname = tempnam(config_get('temp_dir'),"TestLink_GTMP.tmp");
+  $objPHPExcel->setActiveSheetIndex(0);
+  $xlsType = 'Excel5';                               
+  $objWriter = PHPExcel_IOFactory::createWriter($objPHPExcel, $xlsType);  
+  $objWriter->save($tmpfname);
+  
+  downloadXls($tmpfname,$xlsType,$gui,'TestLink_GTMP_');
+}
+
+
+/**
+ *
+ */
+function xlsStepOne(&$oj,$style,&$lbl,&$gui) {
+  $dummy = '';
+  $lines2write = array(array($lbl['testproject'],$gui->tproject_name),
+                       array($lbl['testplan'],$gui->tplan_name),
+                       array($lbl['generated_by_TestLink_on'],
+                       localize_dateOrTimeStamp(null,$dummy,'timestamp_format',time())));
+
+  $cellArea = "A1:"; 
+  foreach($lines2write as $zdx => $fields) {
+    $cdx = $zdx+1;
+    $oj->setActiveSheetIndex(0)
+       ->setCellValue("A{$cdx}", current($fields))
+       ->setCellValue("B{$cdx}", end($fields));
+  }
+
+  $cellArea .= "A{$cdx}";
+  $oj->getActiveSheet()
+     ->getStyle($cellArea)
+     ->applyFromArray($style['ReportContext']); 
+
+  return $lines2write;
+}  
+
+/**
+ *
+ */
+function initLblSpreadsheet() {
+  $lbl = init_labels(
+           array('testsuite' => null,
+                 'testcase_qty' => null,'keyword' => null, 
+                 'platform' => null,'priority' => null,
+                 'priority_level' => null,
+                 'build' => null,'testplan' => null, 
+                 'testproject' => null,'not_run' => null,
+                 'completed_perc' => 'trep_comp_perc',
+                 'generated_by_TestLink_on' => null));
+  return $lbl;
+} 
+
+/**
+ *
+ */  
+function initStyleSpreadsheet() {
+  $style = array();
+  $style['ReportContext'] = array('font' => array('bold' => true));
+  $style['DataHeader'] = 
+    array('font' => array('bold' => true),
+          'borders' => 
+             array('outline' => 
+              array('style' => PHPExcel_Style_Border::BORDER_MEDIUM),
+          'vertical' => 
+              array('style' => PHPExcel_Style_Border::BORDER_THIN)),
+          'fill' => array('type' => PHPExcel_Style_Fill::FILL_SOLID,
+          'startcolor' => array( 'argb' => 'FF9999FF'))
+    );
+
+  $style['rowA'] = 
+    array('borders' => 
+            array(
+              'outline' => 
+               array('style' => PHPExcel_Style_Border::BORDER_THIN),
+              'vertical' => 
+               array('style' => PHPExcel_Style_Border::BORDER_THIN)),
+          'fill' => array('type' => PHPExcel_Style_Fill::FILL_SOLID,
+          'startcolor' => array( 'argb' => 'FFFFFFFF'))
+    );
+
+  $style['rowB'] = 
+    array('borders' => 
+            array(
+              'outline' => 
+               array('style' => PHPExcel_Style_Border::BORDER_THIN),
+              'vertical' => 
+               array('style' => PHPExcel_Style_Border::BORDER_THIN)),
+          'fill' => array('type' => PHPExcel_Style_Fill::FILL_SOLID,
+          'startcolor' => array( 'argb' => 'DCDCDCDC'))
+    );
+
+  return $style;
+}  
+
+/**
+ *
+ */
+function setCellRangeSpreadsheet() {
+  $cr = range('A','Z');
+  $crLen = count($cr);
+  for($idx = 0; $idx < $crLen; $idx++) {
+    for($jdx = 0; $jdx < $crLen; $jdx++) {
+      $cr[] = $cr[$idx] . $cr[$jdx];
+    }
+  }
+  return $cr;
+}  
+
+
+
+/**
+ *
+ */
+function checkRights(&$db,&$user,$context = null) {
+  if(is_null($context)) {
+    $context = new stdClass();
+    $context->tproject_id = $context->tplan_id = null;
+    $context->getAccessAttr = false; 
+  }
+
+  $check = $user->hasRight($db,'testplan_metrics',$context->tproject_id,$context->tplan_id,$context->getAccessAttr);
+  return $check;
+}

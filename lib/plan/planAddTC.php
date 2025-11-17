@@ -5,38 +5,18 @@
  *
  * link/unlink test cases to a test plan
  *
- * @package 	TestLink
- * @copyright 	2007-2009, TestLink community 
- * @version    	CVS: $Id: planAddTC.php,v 1.109 2010/10/30 16:01:56 franciscom Exp $
- * @filesource	http://testlink.cvs.sourceforge.net/viewvc/testlink/testlink/lib/functions/object.class.php?view=markup
- * @link 		http://www.teamst.org/index.php
+ * @package     TestLink
+ * @filesource  planAddTC.php
+ * @copyright   2007-2020, TestLink community 
+ * @link        http://testlink.sourceforge.net/
  * 
- * @internal Revisions:
- * 20101026 - franciscom - BUGID 3889: Add Test Cases to Test plan - checks with test case id and test case name filters.
- * 20101025 - franciscom - BUGID 3889: Add Test Cases to Test plan - Right pane does not honor custom field filter
- * 20101009 - franciscom - fixing event viewer warnings created for missing initialization of required
- *						   properties of gui object
- *	
- * 20101004 - asimon - adapted to new interface of getTestersForHtmlOptions
- * 20100927 - asimon - refresh tree only when action is done
- * 20100721 - asimon - BUGID 3406: assign users per build when adding testcases to plan,
- *                                 added init_build_selector()
- * 20100628 - asimon - removal of constants from filter control class
- * 20100625 - asimon - refactoring for new filter features and BUGID 3516
- * 20100624 - asimon - CVS merge (experimental branch to HEAD)
- * 20100417 - BUGDID 2498 - filter by test case importance
- * 20100411 - BUGID 2797 - filter by test case execution type
- * 20100225 - eloff - BUGID 3205 - Don't show "save platforms" when platforms aren't used
- * 20100129 - franciscom - moved here from template, logic to initialize:
- *                         drawSavePlatformsButton,drawSaveCFieldsButton
- * 20090922 - franciscom - add contribution - bulk tester assignment while adding test cases
- *
  **/
 
 require_once('../../config.inc.php');
 require_once("common.php");
 require_once('email_api.php');
 require_once("specview.php");
+require_once('Zend/Validate/EmailAddress.php');
 
 testlinkInitPage($db);
 
@@ -45,155 +25,196 @@ $tsuite_mgr = new testsuite($db);
 $tplan_mgr = new testplan($db);
 $tproject_mgr = new testproject($db);
 $tcase_mgr = new testcase($db);
+$req_mgr = new requirement_mgr($db);
+$req_spec_mgr = new requirement_spec_mgr($db);
 
 $templateCfg = templateConfiguration();
-$args = init_args();
+$args = init_args($tproject_mgr);
 $gui = initializeGui($db,$args,$tplan_mgr,$tcase_mgr);
 
-// BUGID 3406
-$gui->build = init_build_selector($tplan_mgr, $args);
-
 $keywordsFilter = null;
-if(is_array($args->keyword_id))
-{
-    $keywordsFilter = new stdClass();
-    $keywordsFilter->items = $args->keyword_id;
-    $keywordsFilter->type = $gui->keywordsFilterType->selected;
+if(is_array($args->keyword_id)) {
+  $keywordsFilter = new stdClass();
+  $keywordsFilter->items = $args->keyword_id;
+  $keywordsFilter->type = $gui->keywordsFilterType->selected;
 }
 
 $do_display = 0;
-switch($args->item_level)
-{
-    case 'testsuite':
-		$do_display = 1;
-		break;
+$do_display_coverage = 0;
 
-    case 'testproject':
-	    show_instructions('planAddTC');
-	    exit();
-	    break;
+switch($args->item_level) {
+  case 'testsuite':
+  case 'req':
+  case 'req_spec':
+    $do_display = 1;
+  break;
+
+  case 'reqcoverage':
+  case 'reqspeccoverage':
+    $do_display_coverage = 1;
+  break;
+  
+  case 'testproject':
+	  redirect($_SESSION['basehref'] . 
+      "lib/results/printDocOptions.php?activity=$args->activity");
+    exit();
+  break;
 }
 
-switch($args->doAction)
-{
-    case 'doAddRemove':
-		// Remember:  checkboxes exist only if are checked
-	    if(!is_null($args->testcases2add))
-	    {
-	    	// items_to_link structure:
-	    	// key: test case id , value: map 
-	    	//                            key: platform_id value: test case VERSION ID
-		    $items_to_link = null;
-            foreach ($args->testcases2add as $tcase_id => $info) 
-            {
-                foreach ($info as $platform_id => $tcase_id) 
-                {
-                    // $items_to_link[$tcase_id][$platform_id] = $args->tcversion_for_tcid[$tcase_id];
-                    if( isset($args->tcversion_for_tcid[$tcase_id]) )
-                    {
-                    	$tcversion_id = $args->tcversion_for_tcid[$tcase_id];
-                    }
-                    else
-                    {
-                    	$tcversion_id = $args->linkedVersion[$tcase_id];
-                    }
-                    $items_to_link['tcversion'][$tcase_id] = $tcversion_id;
-                    $items_to_link['platform'][$platform_id] = $platform_id;
-                    $items_to_link['items'][$tcase_id][$platform_id] = $tcversion_id;
-                }
-            }
-           
-		    $linked_features=$tplan_mgr->link_tcversions($args->tplan_id,$items_to_link,$args->userID);
-		    if( $args->testerID > 0 )
-		    {
-		    	$features2add = null;
-				$status_map = $tplan_mgr->assignment_mgr->get_available_status();
-		        $types_map = $tplan_mgr->assignment_mgr->get_available_types();
-		        $db_now = $db->db_now();
-                $tcversion_tcase = array_flip($items_to_link['tcversion']);
-                
-                $getOpt = array('outputFormat' => 'map', 'addIfNull' => true);
-                $platformSet = $tplan_mgr->getPlatforms($args->tplan_id,$getOpt);
-                
-		    	foreach($linked_features as $platform_id => $tcversion_info)
-		    	{
-		    		foreach($tcversion_info as $tcversion_id => $feature_id)
-		    		{
-		    			$features2['add'][$feature_id]['user_id'] = $args->testerID;
-						$features2['add'][$feature_id]['type'] = $types_map['testcase_execution']['id'];
-						$features2['add'][$feature_id]['status'] = $status_map['open']['id'];
-						$features2['add'][$feature_id]['assigner_id'] = $args->userID;
-						$features2['add'][$feature_id]['tcase_id'] = $tcversion_tcase[$tcversion_id];
-						$features2['add'][$feature_id]['tcversion_id'] = $tcversion_id;
-					    $features2['add'][$feature_id]['creation_ts'] = $db_now;
-					    $features2['add'][$feature_id]['platform_name'] = $platformSet[$platform_id];
-					    
-					    // BUGID 3406 
-					    $features2['add'][$feature_id]['build_id'] = $args->build_id;
-					}
-            	}
 
-    			foreach($features2 as $key => $values)
-    			{
-			       	$tplan_mgr->assignment_mgr->assign($values);
-    				$called[$key]=true;
-    			}
-				if($args->send_mail)
-				{
-				    foreach($called as $ope => $ope_status)
-				    {
-        		    	if($ope_status)
-        		    	{
-        		        	send_mail_to_testers($db,$tcase_mgr,$gui,$args,$features2['add'],$ope);     
-				        }
-				    }
-				}	// if($args->send_mail)
+switch($args->doAction) {
+  case 'doAddRemove':
+    // Remember:  checkboxes exist only if are checked
+    $gui->itemQty = count((array)$args->testcases2add);
+    
+    if( !is_null($args->testcases2add) ) {
+      addToTestPlan($db,$args,$gui,$tplan_mgr,$tcase_mgr);
+    }  
 
-		    }
-	    }
+    if(!is_null($args->testcases2remove)) {
+      // remove without warning
+      $items_to_unlink=null;
+      foreach ($args->testcases2remove as $tcase_id => $info)  {
+        foreach ($info as $platform_id => $tcversion_id)  {
+          $items_to_unlink['tcversion'][$tcase_id] = $tcversion_id;
+          $items_to_unlink['platform'][$platform_id] = $platform_id;
+          $items_to_unlink['items'][$tcase_id][$platform_id] = $tcversion_id;
+        }
+      }
+      $tplan_mgr->unlink_tcversions($args->tplan_id,$items_to_unlink);
+    }
+  
+    doReorder($args,$tplan_mgr);
+  break;
+  
+  case 'doReorder':
+    doReorder($args,$tplan_mgr);
+  break;
 
-	    if(!is_null($args->testcases2remove))
-	    {
-		    // remove without warning
-		    $items_to_unlink=null;
-            foreach ($args->testcases2remove as $tcase_id => $info) 
-            {
-                foreach ($info as $platform_id => $tcversion_id) 
-                {
-                    $items_to_unlink['tcversion'][$tcase_id] = $tcversion_id;
-                    $items_to_unlink['platform'][$platform_id] = $platform_id;
-                    $items_to_unlink['items'][$tcase_id][$platform_id] = $tcversion_id;
-                }
-            }
-		    $tplan_mgr->unlink_tcversions($args->tplan_id,$items_to_unlink);
-	    }
-	    doReorder($args,$tplan_mgr);
-	    $do_display = 1;
-	    break;
-	
-    case 'doReorder':
-		doReorder($args,$tplan_mgr);
-		$do_display = 1;
-		break;
+  case 'doSavePlatforms':
+    doSavePlatforms($args,$tplan_mgr);
+  break;
 
-    case 'doSavePlatforms':
-		doSavePlatforms($args,$tplan_mgr);
-		$do_display = 1;
-		break;
+  case 'doSaveCustomFields':
+    doSaveCustomFields($args,$_REQUEST,$tplan_mgr,$tcase_mgr);
+  break;
 
-    case 'doSaveCustomFields':
-		doSaveCustomFields($args,$_REQUEST,$tplan_mgr,$tcase_mgr);
-		$do_display = 1;
-		break;
-	
-    default:
-		break;
+  default:
+  break;
 }
+
 $smarty = new TLSmarty();
-if($do_display)
-{
-	$tsuite_data = $tsuite_mgr->get_by_id($args->object_id);
-		
+
+
+if($do_display) {
+  $tsuite_data = $tsuite_mgr->get_by_id($args->object_id);
+  // see development documentation on [INSTALL DIR]/docs/development/planAddTC.php.txt
+  $tplan_linked_tcversions = getFilteredLinkedVersions($db,$args,$tplan_mgr,$tcase_mgr,array('addImportance' => true));
+
+  // Add Test Cases to Test plan - Right pane does not honor custom field filter
+  $testCaseSet = $args->control_panel['filter_tc_id'];   
+  if(!is_null($keywordsFilter) ) { 
+    
+    // With this pieces we implement the AND type of keyword filter.
+    $keywordsTestCases = 
+      $tproject_mgr->getKeywordsLatestTCV($args->tproject_id,
+        $keywordsFilter->items,$keywordsFilter->type);
+
+    if (sizeof($keywordsTestCases)) {
+      $testCaseSet = array_keys($keywordsTestCases);
+    }
+  }
+  
+  // Choose enable/disable display of custom fields, analysing if this kind of custom fields
+  // exists on this test project.
+  $cfields = (array)$tsuite_mgr->cfield_mgr->get_linked_cfields_at_testplan_design($args->tproject_id,1,'testcase');
+  $opt = array('write_button_only_if_linked' => 0, 'add_custom_fields' => 0);
+  $opt['add_custom_fields'] = count($cfields) > 0 ? 1 : 0;
+
+  // Add Test Cases to Test plan - Right pane does not honor custom field filter
+  // filter by test case execution type
+  $filters = array('keywords' => $args->keyword_id, 
+                   'testcases' => $testCaseSet, 
+                   'exec_type' => $args->executionType, 
+                   'importance' => $args->importance,
+                   'workflow_status' => $args->workflow_status,
+                   'cfields' => null, 'tcase_name' => null,
+                   'platforms' => null);
+
+  if( isset($args->control_panel['filter_custom_fields']) ) {
+    $filters['cfields'] = $args->control_panel['filter_custom_fields']; 
+  }
+
+  if( isset($args->control_panel['filter_testcase_name']) ) {
+    $filters['tcase_name'] = 
+      $args->control_panel['filter_testcase_name']; 
+  }
+
+  if( isset($args->control_panel['filter_platforms']) ) {
+    $filters['platforms'] = 
+      $args->control_panel['filter_platforms']; 
+  }
+
+
+  $out = gen_spec_view($db,'testPlanLinking',
+                       $args->tproject_id,$args->object_id,
+                       $tsuite_data['name'],
+                       $tplan_linked_tcversions,null,$filters,$opt);
+  
+  $gui->has_tc = ($out['num_tc'] > 0 ? 1 : 0);
+  $gui->items = $out['spec_view'];
+  $gui->has_linked_items = $out['has_linked_items'];
+  $gui->add_custom_fields = $opt['add_custom_fields'];
+  $gui->drawSavePlatformsButton = false;
+  $gui->drawSaveCFieldsButton = false;
+
+  if( !is_null($gui->items) )
+  {
+    initDrawSaveButtons($gui);
+  }
+    
+  // This has to be done ONLY AFTER has all data needed => after gen_spec_view() call
+  setAdditionalGuiData($gui);
+
+  // refresh tree only when action is done
+  switch ($args->doAction) 
+  {
+    case 'doReorder':
+    case 'doSavePlatforms':
+    case 'doSaveCustomFields':
+    case 'doAddRemove':
+      $gui->refreshTree = $args->refreshTree;
+    break;
+    
+    default:
+      $gui->refreshTree = false;
+    break;  
+  }
+    
+  $smarty->assign('gui', $gui);
+  $smarty->display($templateCfg->template_dir .  'planAddTC_m1.tpl');
+} elseif ($do_display_coverage) {
+	if($args->item_level == 'reqcoverage') {
+		// Select coverage
+	
+		$requirement_data = $req_mgr->get_by_id($args->object_id, requirement_mgr::LATEST_VERSION);
+		$requirement_data_name = $requirement_data[0]['req_doc_id'] . ' : ' . $requirement_data[0]['title'];
+		// get chekbox value : setting_get_parent_child_relation.
+		if($_SESSION['setting_get_parent_child_relation']){
+			// if checkbox is checked.
+			$requirements_child = $req_spec_mgr->get_requirement_child_by_id($args->object_id, requirement_mgr::LATEST_VERSION);
+		} else {
+			$requirements_child = null;
+		}
+	}
+	elseif($args->item_level == 'reqspeccoverage') {
+	
+		// Select folder coverage
+		$getOptions = array('order_by' => " ORDER BY id");
+		//$getFilters = array('status' => VALID_REQ);
+		$requirements = $req_spec_mgr->get_requirements($args->object_id,'all',null,$getOptions);
+	}
+
 	// This does filter on keywords ALWAYS in OR mode.
 	//
 	// CRITIC:
@@ -223,77 +244,158 @@ if($do_display)
 	//     TC1 - Version 2 NOT ASSIGNED TO TEST PLAN is displayed  ----> THIS IS RIGHT but WRONG
 	//     Only one TC version can be linked to test plan, and TC1 already is LINKED BUT with VERSION 1.
 	//     Version 2 is displayed because it has EXEC TYPE AUTO
-	// 
+	//
 	// How to solve ?
 	// Filters regarding this kind of attributes WILL BE NOT APPLIEDED to get linked items
 	// In this way counters on Test Spec Tree and amount of TC displayed on right pane will be coherent.
-	// 
-	
-	$tplan_linked_tcversions = getFilteredLinkedVersions($args,$tplan_mgr,$tcase_mgr);
-	
-	// BUGID 3889: Add Test Cases to Test plan - Right pane does not honor custom field filter
-	$testCaseSet = $args->control_panel['filter_tc_id'];   
-	if(!is_null($keywordsFilter) )
-	{ 
-	    // With this pieces we implement the AND type of keyword filter.
-	    $keywordsTestCases = $tproject_mgr->get_keywords_tcases($args->tproject_id,$keywordsFilter->items,
-	                                                            $keywordsFilter->type);
-	    
-		if (sizeof($keywordsTestCases))
-		{
+	//
+	// 20130426
+	// Hmm. But if I do as explained in ' How to solve ?'
+	// I need to apply this filters on a second step or this filters will not work
+	// Need to check what I've done
+	//
+	$tplan_linked_tcversions = getFilteredLinkedVersions($db,$args,$tplan_mgr,$tcase_mgr,null,false);
+
+	// Add Test Cases to Test plan - Right pane does not honor custom field filter
+	$testCaseSet = $args->control_panel['filter_tc_id'];
+	if(!is_null($keywordsFilter) ) {
+
+		// With this pieces we implement the AND type of keyword filter.
+    $keywordsTestCases = 
+      $tproject_mgr->getKeywordsLatestTCV($args->tproject_id,
+        $keywordsFilter->items,$keywordsFilter->type);
+
+		if (sizeof($keywordsTestCases)) {
 			$testCaseSet = array_keys($keywordsTestCases);
 		}
 	}
-	
+
 	// Choose enable/disable display of custom fields, analysing if this kind of custom fields
 	// exists on this test project.
-	$cfields=$tsuite_mgr->cfield_mgr->get_linked_cfields_at_testplan_design($args->tproject_id,1,'testcase');
-    $opt = array('write_button_only_if_linked' => 0, 'add_custom_fields' => 0);
-    $opt['add_custom_fields'] = count($cfields) > 0 ? 1 : 0;
+	$cfields = 
+    (array)$tsuite_mgr->cfield_mgr->get_linked_cfields_at_testplan_design($args->tproject_id,1,'testcase');
 
-	// 20101025 - BUGID 3889: Add Test Cases to Test plan - Right pane does not honor custom field filter
-	// 20100411 - BUGID 2797 - filter by test case execution type
-    $filters = array('keywords' => $args->keyword_id, 'testcases' => $testCaseSet, 
-                     'exec_type' => $args->executionType, 'importance' => $args->importance,
-                     'cfields' => $args->control_panel['filter_custom_fields'],
-                     'tcase_name' => $args->control_panel['filter_testcase_name']);
+	$opt = array('write_button_only_if_linked' => 0, 'add_custom_fields' => 0);
+	$opt['add_custom_fields'] = count($cfields) > 0 ? 1 : 0;
 
-	$out = gen_spec_view($db,'testPlanLinking',$args->tproject_id,$args->object_id,$tsuite_data['name'],
-	                     $tplan_linked_tcversions,null,$filters,$opt);
-  
-  	
-  	$gui->has_tc = ($out['num_tc'] > 0 ? 1 : 0);
+  // Add Test Cases to Test plan - Right pane does not honor custom field filter
+  // filter by test case execution type
+	$filters = array('keywords' => $args->keyword_id, 'testcases' => null,
+	'exec_type' => $args->executionType, 'importance' => $args->importance,
+	'cfields' => $args->control_panel['filter_custom_fields'],
+	'tcase_name' => $args->control_panel['filter_testcase_name']);
+	
+	if($args->item_level == 'reqcoverage') {	
+	  $out = array();
+	  $out = gen_coverage_view($db,'testPlanLinking',$args->tproject_id,$args->object_id,$requirement_data_name,
+ 	  $tplan_linked_tcversions,null,$filters,$opt);
+	
+	  // if requirement, has a child requirement.
+	  if(!is_null($requirements_child)){
+		
+		// get parent name.
+		$parentName = $requirement_data_name;
+		
+		foreach($requirements_child as $key => $req){
+			$requirement_data_name = $req['req_doc_id'] . ' : ' . $req['name'] . " " . lang_get('req_rel_is_child_of') . " " . $parentName;
+			$tmp = gen_coverage_view($db,'testPlanLinking',$args->tproject_id,$req['destination_id'],$requirement_data_name,
+			$tplan_linked_tcversions,null,$filters,$opt);
+			// update parent name.
+			$parentName = $req['req_doc_id'] . ' : ' . $req['name'];
+			// First requirement without test cases
+				if (empty($tmp['spec_view']))
+					continue;
+				
+				if(empty($out))
+				{
+					$out = $tmp;
+				}
+				else
+				{	
+					$tmp['spec_view'][1]["testsuite"] = $tmp['spec_view'][0]['testsuite'];
+					array_push($out['spec_view'], $tmp['spec_view'][1]);
+				}
+			}
+		}
+	}
+	elseif($args->item_level == 'reqspeccoverage')
+	{
+	
+		$out = array();
+		foreach($requirements as $key => $req)
+		{
+			if(empty($req['req_doc_id'])){
+				$coverage_name = $req['doc_id'] . " : " . $req['title'];
+			} else {
+				$coverage_name = $req['req_doc_id'] . " : " . $req['title'];
+			}		
+			$tmp = gen_coverage_view($db,'testPlanLinking',$args->tproject_id,$req['id'], $coverage_name,
+					$tplan_linked_tcversions,null,$filters,$opt);
+
+			// First requirement without test cases
+			if (empty($tmp['spec_view']))
+				continue;
+			
+			if(empty($out))
+			{
+				$out = $tmp;
+			}
+			else
+			{	
+				$tmp['spec_view'][1]["testsuite"] = $tmp['spec_view'][0]['testsuite'];
+				array_push($out['spec_view'], $tmp['spec_view'][1]);
+			}
+				
+		}
+
+	}
+
+	// count nb testcases selected in view.
+	$nbTestCaseSelected = 0;
+	foreach($out['spec_view'][1]['testcases'] as $key => $value)
+	{
+		if($value['linked_version_id'] != 0){
+			$nbTestCaseSelected++;
+		}
+	}
+
+	$out['spec_view'][1]['linked_testcase_qty'] = $nbTestCaseSelected;
+	$gui->has_tc = ($out['num_tc'] > 0 ? 1 : 0);
 	$gui->items = $out['spec_view'];
 	$gui->has_linked_items = $out['has_linked_items'];
 	$gui->add_custom_fields = $opt['add_custom_fields'];
-    $gui->drawSavePlatformsButton = false;
-    $gui->drawSaveCFieldsButton = false;
+	$gui->drawSavePlatformsButton = false;
+	$gui->drawSaveCFieldsButton = false;
 
     if( !is_null($gui->items) )
     {
 		initDrawSaveButtons($gui);
-    }
-    
-    // This has to be done ONLY AFTER has all data needed => after gen_spec_view() call
+	}
+
+	// This has to be done ONLY AFTER has all data needed => after gen_spec_view() call
 	setAdditionalGuiData($gui);
 
-	// 20100927 - asimon - refresh tree only when action is done
-	switch ($args->doAction) {
+	// refresh tree only when action is done
+	switch ($args->doAction)
+	{
 		case 'doReorder':
 		case 'doSavePlatforms':
 		case 'doSaveCustomFields':
 		case 'doAddRemove':
-			$gui->refreshTree = $args->refreshTree;
+		$gui->refreshTree = $args->refreshTree;
 		break;
-		
+
 		default:
-			$gui->refreshTree = false;
-		break;	
+		$gui->refreshTree = false;
+		break;
 	}
-    
+
 	$smarty->assign('gui', $gui);
 	$smarty->display($templateCfg->template_dir .  'planAddTC_m1.tpl');
 }
+
+
+
 
 
 /*
@@ -305,80 +407,121 @@ if($do_display)
   returns: object with some REQUEST and SESSION values as members
 
 */
-function init_args()
+function init_args(&$tproject_mgr)
 {
-	$_REQUEST = strings_stripSlashes($_REQUEST);
+  $_REQUEST = strings_stripSlashes($_REQUEST);
 
-	$args = new stdClass();
-	$args->tplan_id = isset($_REQUEST['tplan_id']) ? $_REQUEST['tplan_id'] : $_SESSION['testplanID'];
-	$args->object_id = isset($_REQUEST['id']) ? intval($_REQUEST['id']) : 0;
-	$args->item_level = isset($_REQUEST['edit']) ? trim($_REQUEST['edit']) : null;
-	$args->doAction = isset($_REQUEST['doAction']) ? $_REQUEST['doAction'] : "default";
-	$args->tproject_id = $_SESSION['testprojectID'];
-	$args->tproject_name = $_SESSION['testprojectName'];
-	$args->testcases2add = isset($_REQUEST['achecked_tc']) ? $_REQUEST['achecked_tc'] : null;
-	$args->tcversion_for_tcid = isset($_REQUEST['tcversion_for_tcid']) ? $_REQUEST['tcversion_for_tcid'] : null;
-	$args->testcases2remove = isset($_REQUEST['remove_checked_tc']) ? $_REQUEST['remove_checked_tc'] : null;
+  $args = new stdClass();
 
-	$args->testcases2order = isset($_REQUEST['exec_order']) ? $_REQUEST['exec_order'] : null;
-	$args->linkedOrder = isset($_REQUEST['linked_exec_order']) ? $_REQUEST['linked_exec_order'] : null;
-	$args->linkedVersion = isset($_REQUEST['linked_version']) ? $_REQUEST['linked_version'] : null;
-	$args->linkedWithCF = isset($_REQUEST['linked_with_cf']) ? $_REQUEST['linked_with_cf'] : null;
-	
-	$args->feature2fix = isset($_REQUEST['feature2fix']) ? $_REQUEST['feature2fix'] : null;
-	$args->userID = $_SESSION['currentUser']->dbID;
-	$args->testerID = isset($_REQUEST['testerID']) ? intval($_REQUEST['testerID']) : 0;
-    $args->send_mail = isset($_REQUEST['send_mail']) ? $_REQUEST['send_mail'] : false;
+  $args->user = isset($_SESSION['currentUser']) ? $_SESSION['currentUser'] : 0;
+  $args->userID = intval($args->user->dbID);
 
-    // BUGID 3516
-	//	// BUGID 2797 - filter by test case execution type
-	//	// 0 -> Any, but has to be converter to null to be used on call to other functions
-	//	$args->executionType = isset($_REQUEST['executionType']) ? intval($_REQUEST['executionType']) : 0;
-	//	$args->executionType = ($args->executionType > 0) ? $args->executionType : null;
-	//
-	//	// 0 -> Any, but has to be converter to null to be used on call to other functions
-	//	$args->importance = isset($_REQUEST['importance']) ? intval($_REQUEST['importance']) : 0;
-	//	$args->importance = ($args->importance > 0) ? $args->importance : null;
+  $args->tplan_id = isset($_REQUEST['tplan_id']) ? intval($_REQUEST['tplan_id']) : intval($_SESSION['testplanID']);
+  $args->tproject_id = intval($_SESSION['testprojectID']);
+  $args->tproject_name = $_SESSION['testprojectName'];
 
-	// BUGID 3516
-	// For more information about the data accessed in session here, see the comment
-	// in the file header of lib/functions/tlTestCaseFilterControl.class.php.
-	$form_token = isset($_REQUEST['form_token']) ? $_REQUEST['form_token'] : 0;
-	$mode = 'plan_add_mode';
-	$session_data = isset($_SESSION[$mode]) && isset($_SESSION[$mode][$form_token]) ? $_SESSION[$mode][$form_token] : null;
+  $args->object_id = isset($_REQUEST['id']) ? intval($_REQUEST['id']) : 0;
+  $args->item_level = isset($_REQUEST['edit']) ? trim($_REQUEST['edit']) : null;
+  $args->doAction = isset($_REQUEST['doAction']) ? $_REQUEST['doAction'] : "default";
+  $args->testcases2add = isset($_REQUEST['achecked_tc']) ? $_REQUEST['achecked_tc'] : null;
+  $args->tcversion_for_tcid = isset($_REQUEST['tcversion_for_tcid']) ? $_REQUEST['tcversion_for_tcid'] : null;
+  $args->testcases2remove = isset($_REQUEST['remove_checked_tc']) ? $_REQUEST['remove_checked_tc'] : null;
 
-    // to be able to pass filters to functions present on specview.php
-	$args->control_panel = $session_data;
-	
-	$getFromSession = !is_null($session_data);
-	$booleankeys = array('refreshTree' => 'setting_refresh_tree_on_action','importance' => 'filter_priority',
-						 'executionType' => 'filter_execution_type');
-    foreach($booleankeys as $key => $value)
-    {
-    	$args->$key = ($getFromSession && isset($session_data[$key])) ? $session_data[$key] : 0;
-    }						 
-	$args->importance = ($args->importance > 0) ? $args->importance : null;
+  $args->testcases2order = isset($_REQUEST['exec_order']) ? $_REQUEST['exec_order'] : null;
+  $args->linkedOrder = isset($_REQUEST['linked_exec_order']) ? $_REQUEST['linked_exec_order'] : null;
+  $args->linkedVersion = isset($_REQUEST['linked_version']) ? $_REQUEST['linked_version'] : null;
+  $args->linkedWithCF = isset($_REQUEST['linked_with_cf']) ? $_REQUEST['linked_with_cf'] : null;
+  
+  $args->feature2fix = isset($_REQUEST['feature2fix']) ? $_REQUEST['feature2fix'] : null;
+  $args->testerID = isset($_REQUEST['testerID']) ? intval($_REQUEST['testerID']) : 0;
+  $args->send_mail = isset($_REQUEST['send_mail']) ? $_REQUEST['send_mail'] : false;
+
+  // For more information about the data accessed in session here, see the comment
+  // in the file header of lib/functions/tlTestCaseFilterControl.class.php.
+  $args->treeFormToken = isset($_REQUEST['form_token']) ? $_REQUEST['form_token'] : 0;
+  $mode = 'plan_add_mode';
+  $pageCache = isset($_SESSION[$mode]) 
+               && isset($_SESSION[$mode][$args->treeFormToken]) ? 
+               $_SESSION[$mode][$args->treeFormToken] : null;
+
+  // need to comunicate with left frame, will do via $_SESSION and form_token 
+  if( $args->treeFormToken > 0 && ($args->item_level == 'testsuite' || $args->item_level == 'testcase')) {
+    // do not understand why this do not works OK
+    $_SESSION['loadRightPaneAddTC'][$args->treeFormToken] = false;
+  }  
 
 
-	$args->keyword_id = 0;
-	$ak = 'filter_keywords';
-	if (isset($session_data[$ak])) {
-		$args->keyword_id = $session_data[$ak];
-		if (is_array($args->keyword_id) && count($args->keyword_id) == 1) {
-			$args->keyword_id = $args->keyword_id[0];
-		}
-	}
-	
-	$args->keywordsFilterType = null;
-	$ak = 'filter_keywords_filter_type';
-	if (isset($session_data[$ak])) {
-		$args->keywordsFilterType = $session_data[$ak];
-	}
-	
-	// BUGID 3406
-	$args->build_id = isset($_REQUEST['build_id']) ? intval($_REQUEST['build_id']) : 0;
-	
-	return $args;
+  // to be able to pass filters to functions present on specview.php
+  $args->control_panel = $pageCache;
+  $getFromSession = !is_null($pageCache);
+
+  $booleankeys = array('refreshTree' => 'setting_refresh_tree_on_action',
+                       'importance' => 'filter_importance',
+                       'executionType' => 'filter_execution_type');
+
+  foreach($booleankeys as $key => $value) {
+    $args->$key = ($getFromSession && isset($pageCache[$value])) ? $pageCache[$value] : 0;
+  }            
+  $args->importance = ($args->importance > 0) ? $args->importance : null;
+
+
+  // Filter Top level testsuite is implemented in an strange way:
+  // contains WHAT TO REMOVE
+  $args->topLevelTestSuite = 0;
+  if( $getFromSession && isset($pageCache['filter_toplevel_testsuite']) 
+                      && count($pageCache['filter_toplevel_testsuite']) > 0)
+  {
+    // get all
+    $first_level_suites = $tproject_mgr->get_first_level_test_suites($args->tproject_id,'simple',array('accessKey' => 'id'));
+
+  
+    // remove unneeded
+    $hit = array_diff_key($first_level_suites, $pageCache['filter_toplevel_testsuite']);
+    $args->topLevelTestSuite = intval(key($hit));
+  }  
+  
+  // This has effect when 'show full (on right pane)' button is used
+  if($args->tproject_id == $args->object_id && $args->topLevelTestSuite > 0) {
+    $args->object_id = $args->topLevelTestSuite;
+  }  
+
+
+
+  $args->keyword_id = 0;
+  $ak = 'filter_keywords';
+  if (isset($pageCache[$ak])) {
+    $args->keyword_id = $pageCache[$ak];
+    if (is_array($args->keyword_id) && count($args->keyword_id) == 1) {
+      $args->keyword_id = $args->keyword_id[0];
+    }
+  }
+  
+  $args->keywordsFilterType = null;
+  $ak = 'filter_keywords_filter_type';
+  if (isset($pageCache[$ak])) {
+    $args->keywordsFilterType = $pageCache[$ak];
+  }
+
+  $args->platform_id = 0;
+  $ak = 'filter_platforms';
+  if (isset($pageCache[$ak])) {
+    $args->platform_id = $pageCache[$ak];
+  }
+  
+  $args->keywordsFilterType = null;
+  $ak = 'filter_keywords_filter_type';
+  if (isset($pageCache[$ak])) {
+    $args->keywordsFilterType = $pageCache[$ak];
+  }
+
+
+  $ak = 'filter_workflow_status';
+  $args->workflow_status = isset($pageCache[$ak]) ? $pageCache[$ak] : null; 
+
+  $args->build_id = isset($_REQUEST['build_id']) ? intval($_REQUEST['build_id']) : 0;
+  $args->activity = isset($_REQUEST['activity']) ? $_REQUEST['activity'] : '';
+
+  return $args;
 }
 
 /*
@@ -415,27 +558,27 @@ function doReorder(&$argsObj,&$tplanMgr)
         $tcaseSet = array_keys($argsObj->testcases2add);
         foreach($tcaseSet as $tcid)
         {
-        	// This check is needed because, after we have added test case
-        	// for a platform, this will not be present anymore
-        	// in tcversion_for_tcid, but it's present in  linkedVersion.
-        	// IMPORTANT:
-        	// We do not allow link of different test case version on a
-        	// testplan no matter we are using or not platform feature.
-        	//
+          // This check is needed because, after we have added test case
+          // for a platform, this will not be present anymore
+          // in tcversion_for_tcid, but it's present in  linkedVersion.
+          // IMPORTANT:
+          // We do not allow link of different test case version on a
+          // testplan no matter we are using or not platform feature.
+          //
             $tcversion_id=null;
-        	if( isset($argsObj->tcversion_for_tcid[$tcid]) )
-        	{
-            	$tcversion_id = $argsObj->tcversion_for_tcid[$tcid];
-            	//$mapo[$tcversion_id] = $argsObj->testcases2order[$tcid];
+          if( isset($argsObj->tcversion_for_tcid[$tcid]) )
+          {
+              $tcversion_id = $argsObj->tcversion_for_tcid[$tcid];
+              //$mapo[$tcversion_id] = $argsObj->testcases2order[$tcid];
             }
             else if( isset($argsObj->linkedVersion[$tcid]) && 
                      !isset($mapo[$argsObj->linkedVersion[$tcid]]))
             {
-            	$tcversion_id = $argsObj->linkedVersion[$tcid];
+              $tcversion_id = $argsObj->linkedVersion[$tcid];
             }
             if( !is_null($tcversion_id))
             {
-            	$mapo[$tcversion_id] = $argsObj->testcases2order[$tcid];
+              $mapo[$tcversion_id] = $argsObj->testcases2order[$tcid];
             }
         }
     }  
@@ -458,80 +601,101 @@ function doReorder(&$argsObj,&$tplanMgr)
 */
 function initializeGui(&$dbHandler,$argsObj,&$tplanMgr,&$tcaseMgr)
 {
-	
-    $tcase_cfg = config_get('testcase_cfg');
-    $title_separator = config_get('gui_title_separator_1');
+  
+  $tcase_cfg = config_get('testcase_cfg');
+  $title_separator = config_get('gui_title_separator_1');
 
-    $gui = new stdClass();
-    $gui->testCasePrefix = $tcaseMgr->tproject_mgr->getTestCasePrefix($argsObj->tproject_id);
-    $gui->testCasePrefix .= $tcase_cfg->glue_character;
+  $gui = new stdClass();
+  $gui->status_feedback = buildStatusFeedbackMsg();
+
+  $gui->testCasePrefix = $tcaseMgr->tproject_mgr->getTestCasePrefix($argsObj->tproject_id);
+  $gui->testCasePrefix .= $tcase_cfg->glue_character;
+
+  $gui->can_remove_executed_testcases = $argsObj->user->hasRight($dbHandler,
+                                                                 "testplan_unlink_executed_testcases",
+                                                                 $argsObj->tproject_id,$argsObj->tplan_id);
+
+  $tprojectInfo = $tcaseMgr->tproject_mgr->get_by_id($argsObj->tproject_id);
+  $gui->priorityEnabled = $tprojectInfo['opt']->testPriorityEnabled;
+
+  // $gui->keywordsFilterType = $argsObj->keywordsFilterType;
+  // $gui->keywords_filter = '';
+  $gui->has_tc = 0;
+  $gui->items = null;
+  $gui->has_linked_items = false;
     
-    $gui->can_remove_executed_testcases=$tcase_cfg->can_remove_executed;
+  $gui->keywordsFilterType = new stdClass();
+  $gui->keywordsFilterType->options = array('OR' => 'Or' , 'AND' =>'And'); 
+  $gui->keywordsFilterType->selected=$argsObj->keywordsFilterType;
+
+  $gui->keyword_id = $argsObj->keyword_id;
+  $gui->keywords_filter_feedback = '';
+  if( !is_null($gui->keyword_id) && $gui->keyword_id != 0 ) {
+    $gui->keywords_filter_feedback = 
+      buildKeywordsFeedbackMsg($dbHandler,$argsObj,$gui); 
+  }  
+
+  $gui->platform_id = $argsObj->platform_id;
+  $gui->platforms_filter_feedback = '';
+  if( !is_null($gui->platform_id) && $gui->platform_id != 0 ) {
+    $gui->platforms_filter_feedback = 
+      buildPlatformsFeedbackMsg($dbHandler,$argsObj,$gui); 
+  }  
 
 
+  // full_control, controls the operations planAddTC_m1.tpl will allow
+  // 1 => add/remove
+  // 0 => just remove
+  $gui->full_control = 1;
 
+  $tplan_info = $tplanMgr->get_by_id($argsObj->tplan_id);
+  $gui->testPlanName = $tplan_info['name'];
+  $gui->pageTitle = lang_get('test_plan') . $title_separator . $gui->testPlanName;
+  $gui->refreshTree = $argsObj->refreshTree;
+  $gui->canAssignExecTask = $argsObj->user->hasRight($dbHandler,"exec_assign_testcases",$argsObj->tproject_id,$argsObj->tplan_id);
 
-    $gui->keywordsFilterType = $argsObj->keywordsFilterType;
+  $tproject_mgr = new testproject($dbHandler);
+  $tproject_info = $tproject_mgr->get_by_id($argsObj->tproject_id);
 
-    $gui->keywords_filter = '';
-    $gui->has_tc = 0;
-    $gui->items = null;
-    $gui->has_linked_items = false;
-    
-    $gui->keywordsFilterType = new stdClass();
-    $gui->keywordsFilterType->options = array('OR' => 'Or' , 'AND' =>'And'); 
-    $gui->keywordsFilterType->selected=$argsObj->keywordsFilterType;
+  $gui->testers = getTestersForHtmlOptions($dbHandler,$argsObj->tplan_id, $tproject_info);
+  $gui->testerID = $argsObj->testerID;
+  $gui->send_mail = $argsObj->send_mail;
+  $gui->send_mail_checked = '';
+  if($gui->send_mail) {
+    $gui->send_mail_checked = ' checked="checked" ';
+  }
 
-    // full_control, controls the operations planAddTC_m1.tpl will allow
-    // 1 => add/remove
-    // 0 => just remove
-    $gui->full_control = 1;
-
-    $tplan_info = $tplanMgr->get_by_id($argsObj->tplan_id);
-    $gui->testPlanName = $tplan_info['name'];
-    $gui->pageTitle = lang_get('test_plan') . $title_separator . $gui->testPlanName;
-    $gui->refreshTree = $argsObj->refreshTree;
-
-	// 20101004 - asimon - adapted to new interface of getTestersForHtmlOptions
-    $tproject_mgr = new testproject($dbHandler);
-    $tproject_info = $tproject_mgr->get_by_id($argsObj->tproject_id);
-
-    $gui->testers = getTestersForHtmlOptions($dbHandler,$argsObj->tplan_id, $tproject_info);
-    $gui->testerID = $argsObj->testerID;
-    $gui->send_mail = $argsObj->send_mail;
-    $gui->send_mail_checked = '';
-    if($gui->send_mail)
+  $platform_mgr = new tlPlatform($dbHandler, $argsObj->tproject_id);
+  $gui->platforms = $platform_mgr->getLinkedToTestplan($argsObj->tplan_id);
+  $gui->platformsForHtmlOptions = null;
+  $gui->usePlatforms = $platform_mgr->platformsActiveForTestplan($argsObj->tplan_id);
+  if($gui->usePlatforms) {
+    // Create options for two different select boxes. $bulk_platforms
+    // has "All platforms" on top and "$platformsForHtmlOptions" has an
+    // empty item
+    $gui->platformsForHtmlOptions[0]='';
+    foreach($gui->platforms as $elem)
     {
-    	$gui->send_mail_checked = ' checked="checked" ';
+      $gui->platformsForHtmlOptions[$elem['id']] =$elem['name'];
     }
 
-	$platform_mgr = new tlPlatform($dbHandler, $argsObj->tproject_id);
-	$gui->platforms = $platform_mgr->getLinkedToTestplan($argsObj->tplan_id);
-	$gui->platformsForHtmlOptions = null;
-	$gui->usePlatforms = $platform_mgr->platformsActiveForTestplan($argsObj->tplan_id);
-	if($gui->usePlatforms)
-	{
-		// Create options for two different select boxes. $bulk_platforms
-		// has "All platforms" on top and "$platformsForHtmlOptions" has an
-		// empty item
-		$gui->platformsForHtmlOptions[0]='';
-		foreach($gui->platforms as $elem)
-		{
-			$gui->platformsForHtmlOptions[$elem['id']] =$elem['name'];
-		}
-		$gui->bulk_platforms = $platform_mgr->getLinkedToTestplanAsMap($argsObj->tplan_id);
-		$gui->bulk_platforms[0] = lang_get("all_platforms");
-		ksort($gui->bulk_platforms);
-	}
+    $optLTT = null;
+    $gui->bulk_platforms = $platform_mgr->getLinkedToTestplanAsMap($argsObj->tplan_id,$optLTT);
+    $gui->bulk_platforms[0] = lang_get("all_platforms");
+    ksort($gui->bulk_platforms);
+  }
 
-	// 
-	$gui->warning_msg = new stdClass();
-	$gui->warning_msg->executed = lang_get('executed_can_not_be_removed');
-	if( $gui->can_remove_executed_testcases )
-	{
-		$gui->warning_msg->executed = lang_get('has_been_executed');
-	}
-    return $gui;
+  // 
+  $gui->warning_msg = new stdClass();
+  $gui->warning_msg->executed = lang_get('executed_can_not_be_removed');
+  if( $gui->can_remove_executed_testcases )
+  {
+    $gui->warning_msg->executed = lang_get('has_been_executed');
+  }
+
+  $gui->build = init_build_selector($tplanMgr, $argsObj);
+
+  return $gui;
 }
 
 
@@ -552,17 +716,17 @@ function doSaveCustomFields(&$argsObj,&$userInput,&$tplanMgr,&$tcaseMgr)
     //       a method on cfield_mgr class.
     //       One issue: find a good method name
     $cf_prefix = $tcaseMgr->cfield_mgr->get_name_prefix();
-	$len_cfp = tlStringLen($cf_prefix);
+  $len_cfp = tlStringLen($cf_prefix);
     $cf_nodeid_pos=4;
     
-  	$nodeid_array_cfnames=null;
+    $nodeid_array_cfnames=null;
 
-  	// Example: two test cases (21 and 19 are testplan_tcversions.id => FEATURE_ID)
-  	//          with 3 custom fields
-  	//
-  	// custom_field_[TYPE]_[CFIELD_ID]_[FEATURE_ID]
-  	//
-  	// (
+    // Example: two test cases (21 and 19 are testplan_tcversions.id => FEATURE_ID)
+    //          with 3 custom fields
+    //
+    // custom_field_[TYPE]_[CFIELD_ID]_[FEATURE_ID]
+    //
+    // (
     // [21] => Array
     //     (
     //         [0] => custom_field_0_3_21
@@ -577,7 +741,7 @@ function doSaveCustomFields(&$argsObj,&$userInput,&$tplanMgr,&$tcaseMgr)
     //         [5] => custom_field_6_9_19
     //     )
     // )
-    //  	
+    //    
     foreach($userInput as $input_name => $value)
     {
         if( strncmp($input_name,$cf_prefix,$len_cfp) == 0 )
@@ -590,8 +754,8 @@ function doSaveCustomFields(&$argsObj,&$userInput,&$tplanMgr,&$tcaseMgr)
     // foreach($argsObj->linkedWithCF as $key => $link_id)
     foreach( $nodeid_array_cfnames as $link_id => $customFieldsNames)
     {   
-    	
-    	
+      
+      
         // Create a SubSet of userInput just with inputs regarding CF for a link_id
         // Example for link_id=21:
         //
@@ -624,15 +788,13 @@ function doSaveCustomFields(&$argsObj,&$userInput,&$tplanMgr,&$tcaseMgr)
 */
 function doSavePlatforms(&$argsObj,&$tplanMgr)
 {
-	foreach($argsObj->feature2fix as $feature_id => $tcversion_platform)
-	{
-		$tcversion_id = key($tcversion_platform);
-		$platform_id = current($tcversion_platform);
-		if( $platform_id != 0 )
-		{
-			$tplanMgr->changeLinkedTCVersionsPlatform($argsObj->tplan_id,0,$platform_id,$tcversion_id);
-		}	
-	}
+  foreach($argsObj->feature2fix as $feature_id => $tcversion_platform) {
+    $tcversion_id = key($tcversion_platform);
+    $platform_id = current($tcversion_platform);
+    if( $platform_id != 0 ) {
+      $tplanMgr->changeLinkedTCVersionsPlatform($argsObj->tplan_id,0,$platform_id,$tcversion_id);
+    } 
+  }
 }
 
 
@@ -644,72 +806,86 @@ function doSavePlatforms(&$argsObj,&$tplanMgr)
  */
 function send_mail_to_testers(&$dbHandler,&$tcaseMgr,&$guiObj,&$argsObj,$features,$operation)
 {
-    $testers['new']=null;
-    $mail_details['new']=lang_get('mail_testcase_assigned') . "<br /><br />";
-    $mail_subject['new']=lang_get('mail_subject_testcase_assigned');
-    $use_testers['new']= true ;
+  $testers['new']=null;
+  $mail_details['new']=lang_get('mail_testcase_assigned') . "<br /><br />";
+  $mail_subject['new']=lang_get('mail_subject_testcase_assigned');
+  $use_testers['new']= true ;
    
-    $tcaseSet=null;
-    $tcnames=null;
-    $email=array();
+  $tcaseSet=null;
+  $tcnames=null;
+  $email=array();
    
-    $userSet[]=$argsObj->userID;
-    $userSet[]=$argsObj->testerID;
+  $userSet[]=$argsObj->userID;
+  $userSet[]=$argsObj->testerID;
     
-    $userData=tlUser::getByIDs($dbHandler,$userSet);
-    $assigner=$userData[$argsObj->userID]->firstName . ' ' . $userData[$argsObj->userID]->lastName ;
+  $userData=tlUser::getByIDs($dbHandler,$userSet);
+  $assigner=$userData[$argsObj->userID]->firstName . ' ' . $userData[$argsObj->userID]->lastName ;
               
-    $email['from_address']=config_get('from_email');
-    $body_first_lines = lang_get('testproject') . ': ' . $argsObj->tproject_name . '<br />' .
-                        lang_get('testplan') . ': ' . $guiObj->testPlanName .'<br /><br />';
+  $email['from_address']=config_get('from_email');
+  $body_first_lines = lang_get('testproject') . ': ' . $argsObj->tproject_name . '<br />' .
+                      lang_get('testplan') . ': ' . $guiObj->testPlanName .'<br /><br />';
         
-    // Get testers id
-    foreach($features as $feature_id => $value)
+  // Get testers id
+  foreach($features as $feature_id => $value)
+  {
+    if($use_testers['new'])
     {
-        if($use_testers['new'])
-        {
-            $testers['new'][$value['user_id']][$value['tcase_id']]=$value['tcase_id'];              
-        }
-        $tcaseSet[$value['tcase_id']]=$value['tcase_id'];
-        $tcversionSet[$value['tcversion_id']]=$value['tcversion_id'];
-    } 
-    
-    $infoSet=$tcaseMgr->get_by_id_bulk($tcaseSet,$tcversionSet);
-    foreach($infoSet as $value)
-    {
-        $tcnames[$value['testcase_id']] = $guiObj->testCasePrefix . $value['tc_external_id'] . ' ' . $value['name'];    
+      $testers['new'][$value['user_id']][$value['tcase_id']]=$value['tcase_id'];              
     }
+    $tcaseSet[$value['tcase_id']]=$value['tcase_id'];
+    $tcversionSet[$value['tcversion_id']]=$value['tcversion_id'];
+  } 
+    
+  $infoSet=$tcaseMgr->get_by_id_bulk($tcaseSet,$tcversionSet);
+  foreach($infoSet as $value)
+  {
+    $tcnames[$value['testcase_id']] = $guiObj->testCasePrefix . $value['tc_external_id'] . ' ' . $value['name'];    
+  }
 
-    $path_info = $tcaseMgr->tree_manager->get_full_path_verbose($tcaseSet,array('output_format' => 'simple'));
-    $flat_path=null;
-    foreach($path_info as $tcase_id => $pieces)
-    {
-        $flat_path[$tcase_id]=implode('/',$pieces) . '/' . $tcnames[$tcase_id];  
-    }
+  $path_info = $tcaseMgr->tree_manager->get_full_path_verbose($tcaseSet,array('output_format' => 'simple'));
+  $flat_path=null;
+  foreach($path_info as $tcase_id => $pieces)
+  {
+    $flat_path[$tcase_id]=implode('/',$pieces) . '/' . $tcnames[$tcase_id];  
+  }
     
-    
-    foreach($testers as $tester_type => $tester_set)
+  $validator = new Zend_Validate_EmailAddress();
+  foreach($testers as $tester_type => $tester_set)
+  {
+    if( !is_null($tester_set) )
     {
-        if( !is_null($tester_set) )
+      $email['subject'] = $mail_subject[$tester_type] . ' ' . $guiObj->testPlanName;  
+      foreach($tester_set as $user_id => $value)
+      {
+        $userObj=$userData[$user_id];
+        $email['to_address'] = trim($userObj->emailAddress);
+        if($email['to_address'] == '' || !$validator->isValid($email['to_address']))
         {
-            $email['subject'] = $mail_subject[$tester_type] . ' ' . $guiObj->testPlanName;  
-            foreach($tester_set as $user_id => $value)
-            {
-                $userObj=$userData[$user_id];
-                $email['to_address']=$userObj->emailAddress;
-                $email['body'] = $body_first_lines;
-                $email['body'] .= sprintf($mail_details[$tester_type],
-                                          $userObj->firstName . ' ' .$userObj->lastName,$assigner);
-                foreach($value as $tcase_id)
-                {
-                    $email['body'] .= $flat_path[$tcase_id] . '<br />';  
-                }  
-                $email['body'] .= '<br />' . date(DATE_RFC1123);
-  	            $email_op = email_send($email['from_address'], $email['to_address'], 
-  	            		               $email['subject'], $email['body'], '', true, true);
-            } // foreach($tester_set as $user_id => $value)
-  	    }                       
-    }
+          continue;
+        }  
+
+        $email['body'] = $body_first_lines;
+        $email['body'] .= sprintf($mail_details[$tester_type],
+                                  $userObj->firstName . ' ' .$userObj->lastName,$assigner);
+        
+        foreach($value as $tcase_id)
+        {
+          $email['body'] .= $flat_path[$tcase_id] . '<br />';  
+        }  
+        $email['body'] .= '<br />' . date(DATE_RFC1123);
+
+        $email['cc'] = '';
+        $email['attachment'] = null;
+        $email['exit_on_error'] = true;
+        $email['htmlFormat'] = true; 
+
+        $email_op = email_send($email['from_address'], $email['to_address'], 
+                               $email['subject'], $email['body'],
+                               $email['cc'],$email['attachment'],
+                               $email['exit_on_error'],$email['htmlFormat']);
+      } 
+    }                       
+  }
 }
 
 
@@ -719,62 +895,62 @@ function send_mail_to_testers(&$dbHandler,&$tcaseMgr,&$guiObj,&$argsObj,$feature
  */
 function initDrawSaveButtons(&$guiObj)
 {
-	$keySet = array_keys($guiObj->items);
+  $keySet = array_keys($guiObj->items);
 
-	// 20100225 - eloff - BUGID 3205 - check only when platforms are active
-	// Logic to initialize drawSavePlatformsButton.
-	if ($guiObj->usePlatforms)
-	{
-		// Looks for a platform with id = 0
-		foreach($keySet as $key)
-		{
-			$breakLoop = false;
-			$testSuite = &$guiObj->items[$key];
-			if($testSuite['linked_testcase_qty'] > 0)
-			{
-				$tcaseSet = array_keys($testSuite['testcases']);
-				foreach($tcaseSet as $tcaseKey)
-				{
-					if( isset($testSuite['testcases'][$tcaseKey]['feature_id'][0]) )
-					{
-						$breakLoop = true;
-						$guiObj->drawSavePlatformsButton = true;
-						break;
-					}
-				}
-			}
-			if( $breakLoop )
-			{
-				break;
-			}
-		}
-	}
+  // 20100225 - eloff - BUGID 3205 - check only when platforms are active
+  // Logic to initialize drawSavePlatformsButton.
+  if ($guiObj->usePlatforms)
+  {
+    // Looks for a platform with id = 0
+    foreach($keySet as $key)
+    {
+      $breakLoop = false;
+      $testSuite = &$guiObj->items[$key];
+      if($testSuite['linked_testcase_qty'] > 0)
+      {
+        $tcaseSet = array_keys($testSuite['testcases']);
+        foreach($tcaseSet as $tcaseKey)
+        {
+          if( isset($testSuite['testcases'][$tcaseKey]['feature_id'][0]) )
+          {
+            $breakLoop = true;
+            $guiObj->drawSavePlatformsButton = true;
+            break;
+          }
+        }
+      }
+      if( $breakLoop )
+      {
+        break;
+      }
+    }
+  }
     
     // Logic to initialize drawSaveCFieldsButton
-	reset($keySet);
-	foreach($keySet as $key)
-	{
-		$breakLoop = false;
-		$tcaseSet = &$guiObj->items[$key]['testcases'];
-		if( !is_null($tcaseSet) )
-		{
-			$tcversionSet = array_keys($tcaseSet);
-			foreach($tcversionSet as $tcversionID)
-			{
-				if( isset($tcaseSet[$tcversionID]['custom_fields']) && 
-				    !is_null($tcaseSet[$tcversionID]['custom_fields']))
-				{
-					$breakLoop = true;
-					$guiObj->drawSaveCFieldsButton = true;
-					break;
-				}
-			}
-		}
-		if( $breakLoop )
-		{
-			break;
-		}
-	}
+  reset($keySet);
+  foreach($keySet as $key)
+  {
+    $breakLoop = false;
+    $tcaseSet = &$guiObj->items[$key]['testcases'];
+    if( !is_null($tcaseSet) )
+    {
+      $tcversionSet = array_keys($tcaseSet);
+      foreach($tcversionSet as $tcversionID)
+      {
+        if( isset($tcaseSet[$tcversionID]['custom_fields']) && 
+            !is_null($tcaseSet[$tcversionID]['custom_fields']))
+        {
+          $breakLoop = true;
+          $guiObj->drawSaveCFieldsButton = true;
+          break;
+        }
+      }
+    }
+    if( $breakLoop )
+    {
+      break;
+    }
+  }
 }
 
 
@@ -783,24 +959,24 @@ function initDrawSaveButtons(&$guiObj)
  *
  */
 function setAdditionalGuiData($guiObj)
-{	
-	$actionTitle = 'title_remove_test_from_plan';
-	$buttonValue = 'btn_remove_selected_tc';
-  	$guiObj->exec_order_input_disabled = 'disabled="disabled"';
+{ 
+  $actionTitle = 'title_remove_test_from_plan';
+  $buttonValue = 'btn_remove_selected_tc';
+    $guiObj->exec_order_input_disabled = 'disabled="disabled"';
 
-   	if( $guiObj->full_control )
-	{
-    	$actionTitle = 'title_add_test_to_plan';
-    	$buttonValue = 'btn_add_selected_tc';
-		if( $guiObj->has_linked_items )
-		{
-	    	$actionTitle = 'title_add_remove_test_to_plan';
-	    	$buttonValue = 'btn_add_remove_selected_tc';
-		}
-		$guiObj->exec_order_input_disabled = ' ';
-	}
-	$guiObj->actionTitle = lang_get($actionTitle);
-	$guiObj->buttonValue = lang_get($buttonValue);
+    if( $guiObj->full_control )
+  {
+      $actionTitle = 'title_add_test_to_plan';
+      $buttonValue = 'btn_add_selected_tc';
+    if( $guiObj->has_linked_items )
+    {
+        $actionTitle = 'title_add_remove_test_to_plan';
+        $buttonValue = 'btn_add_remove_selected_tc';
+    }
+    $guiObj->exec_order_input_disabled = ' ';
+  }
+  $guiObj->actionTitle = lang_get($actionTitle);
+  $guiObj->buttonValue = lang_get($buttonValue);
 }
 
 /**
@@ -814,22 +990,148 @@ function setAdditionalGuiData($guiObj)
  */
 function init_build_selector(&$testplan_mgr, &$argsObj) {
 
-	// init array
-	$html_menu = array('items' => null, 'selected' => null, 'count' => 0);
+  // init array
+  $menu = array('items' => null, 'selected' => null, 'count' => 0);
 
-	$html_menu['items'] = $testplan_mgr->get_builds_for_html_options($argsObj->tplan_id,
-	                                                                 testplan::GET_ACTIVE_BUILD,
-	                                                                 testplan::GET_OPEN_BUILD);
-	$html_menu['count'] = count($html_menu['items']);
-	
-	// if no build has been chosen yet, select the newest build by default
-	$build_id = $argsObj->build_id;
-	if (!$build_id && $html_menu['count']) {
-		$keys = array_keys($html_menu['items']);
-		$build_id = end($keys);
-	}
-	$html_menu['selected'] = $build_id;
-	
-	return $html_menu;
+  $menu['items'] = 
+    (array)$testplan_mgr->get_builds_for_html_options($argsObj->tplan_id,
+                                                      testplan::GET_ACTIVE_BUILD,
+                                                      testplan::GET_OPEN_BUILD);
+  $menu['count'] = count($menu['items']);
+  
+  // if no build has been chosen yet, select the newest build by default
+  $build_id = $argsObj->build_id;
+  if (!$build_id && $menu['count']) {
+    $keys = array_keys($menu['items']);
+    $build_id = end($keys);
+  }
+  $menu['selected'] = $build_id;
+  
+  return $menu;
 } // end of method
-?>
+
+/**
+ *
+ */ 
+function addToTestPlan(&$dbHandler,&$argsObj,&$guiObj,&$tplanMgr,&$tcaseMgr) {
+  // items_to_link structure:
+  // key: test case id , value: map 
+  //                            key: platform_id value: test case VERSION ID
+  $items_to_link = null;
+  foreach ($argsObj->testcases2add as $tcase_id => $info) {
+    foreach ($info as $platform_id => $tcase_id) {
+      if( isset($argsObj->tcversion_for_tcid[$tcase_id]) ){
+        $tcversion_id = $argsObj->tcversion_for_tcid[$tcase_id];
+      } else {
+        $tcversion_id = $argsObj->linkedVersion[$tcase_id];
+      }
+      $items_to_link['tcversion'][$tcase_id] = $tcversion_id;
+      $items_to_link['platform'][$platform_id] = $platform_id;
+      $items_to_link['items'][$tcase_id][$platform_id] = $tcversion_id;
+    }
+  }
+
+  $linked_features=$tplanMgr->link_tcversions($argsObj->tplan_id,$items_to_link,$argsObj->userID);
+
+  if( $argsObj->testerID > 0 ) {
+    $features2add = null;
+    $status_map = $tplanMgr->assignment_mgr->get_available_status();
+    $types_map = $tplanMgr->assignment_mgr->get_available_types();
+    $db_now = $dbHandler->db_now();
+    $tcversion_tcase = array_flip($items_to_link['tcversion']);
+                
+    $getOpt = array('outputFormat' => 'map', 'addIfNull' => true);
+    $platformSet = $tplanMgr->getPlatforms($argsObj->tplan_id,$getOpt);
+                
+    foreach($linked_features as $platform_id => $tcversion_info)
+    {
+      foreach($tcversion_info as $tcversion_id => $feature_id)
+      {
+        $features2['add'][$feature_id]['user_id'] = $argsObj->testerID;
+        $features2['add'][$feature_id]['type'] = $types_map['testcase_execution']['id'];
+        $features2['add'][$feature_id]['status'] = $status_map['open']['id'];
+        $features2['add'][$feature_id]['assigner_id'] = $argsObj->userID;
+        $features2['add'][$feature_id]['tcase_id'] = $tcversion_tcase[$tcversion_id];
+        $features2['add'][$feature_id]['tcversion_id'] = $tcversion_id;
+        $features2['add'][$feature_id]['creation_ts'] = $db_now;
+        $features2['add'][$feature_id]['platform_name'] = $platformSet[$platform_id];
+        $features2['add'][$feature_id]['build_id'] = $argsObj->build_id;
+      }
+    }
+        
+    foreach($features2 as $key => $values)
+    {
+      $tplanMgr->assignment_mgr->assign($values);
+      $called[$key]=true;
+    }
+    
+    if($argsObj->send_mail)
+    {
+      foreach($called as $ope => $ope_status)
+      {
+        if($ope_status)
+        {
+          send_mail_to_testers($dbHandler,$tcaseMgr,$guiObj,$argsObj,$features2['add'],$ope);     
+        }
+      }
+    }
+  }
+}
+
+/**
+ *
+ *
+ */
+function buildStatusFeedbackMsg()
+{
+  $ret = '';  
+  $hideStatusSet = config_get('tplanDesign')->hideTestCaseWithStatusIn;
+  if( !is_null($hideStatusSet) )
+  {
+    $cfx = getConfigAndLabels('testCaseStatus');
+    $sc = array_flip($cfx['cfg']);
+    $msg = array();
+    foreach( $hideStatusSet as $code => $verbose)
+    {
+      $msg[] = $cfx['lbl'][$sc[$code]];
+    }  
+    $ret = 
+      sprintf(lang_get('hint_add_testcases_to_testplan_status'),implode(',',$msg));
+  }
+
+  return $ret;
+}
+
+/**
+ *
+ */
+function buildKeywordsFeedbackMsg(&$dbHandler,&$argsObj,&$gui)
+{
+  $opx = array('tproject_id' => $argsObj->tproject_id, 
+               'cols' => 'id,keyword', 'accessKey' => 'id');
+
+  $kwSet = tlKeyword::getSimpleSet($dbHandler, $opx);
+  $msg = array();
+  $k2s = (array)$gui->keyword_id;
+  foreach( $k2s as $idt ) {
+    $msg[] = $kwSet[$idt]['keyword'];
+  }  
+  return implode(',',$msg); 
+}
+
+/**
+ *
+ */
+function buildPlatformsFeedbackMsg(&$dbHandler,&$argsObj,&$gui)
+{
+  $opx = array('fields' => 'id,name', 'accessKey' => 'id');
+
+  $platMgr = new tlPlatform($dbHandler, $argsObj->tproject_id);
+  $k2s = (array)$gui->platform_id;
+  $ixSet = $platMgr->getByID($k2s, $opx);
+  $msg = array();
+  foreach( $k2s as $idt ) {
+    $msg[] = $ixSet[$idt]['name'];
+  }  
+  return implode(',',$msg); 
+}

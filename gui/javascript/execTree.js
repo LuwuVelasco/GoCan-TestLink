@@ -1,6 +1,6 @@
 /*  
 TestLink Open Source Project - http://testlink.sourceforge.net/
-$Id: execTree.js,v 1.3 2009/07/30 17:21:37 franciscom Exp $
+$Id: execTree.js,v 1.3.6.1 2010/11/21 16:54:44 asimon83 Exp $
 
 Created using EXT JS examples.
 This code has following features:
@@ -23,6 +23,7 @@ Author: franciscom - 20080525
        Need to find a way to create common library
 
 rev:
+    20101121 - asimon - BUGID 4042: "Expand/Collapse" Button for Trees
     20080620 - franciscom - added code to save/restore tree state
                             using example found on Ext JS forum
     Ext JS Forums > Ext JS General Forums > Ext: Examples and Extras > Saving tree state example
@@ -104,7 +105,8 @@ TreePanelState.prototype.restoreState = function(defaultPath)
         // activate all path strings from the state
         try 
         {
-            var path = this.state[i];
+        	// BUGID 4196 - tree not properly restored
+            var path = stateToRestore[i];
             this.mytree.expandPath(path);
         } 
         catch(e) 
@@ -128,7 +130,7 @@ Ext.onReady(function(){
     // shorthand
     var Tree = Ext.tree;
     
-    var tree = new Tree.TreePanel({
+    tree = new Tree.TreePanel({
         el:treeCfg.tree_div_id,
         useArrows:true,
         autoScroll:true,

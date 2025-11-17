@@ -22,7 +22,7 @@
  * @package 	TestLink
  * @author 		Martin Havlat, Julian Krien
  * @copyright 	2003, TestLink community 
- * @version    	CVS: $Id: tl_lang_parser.php,v 1.2 2010/05/20 19:42:20 mx-julian Exp $
+ * @version    	CVS: $Id: tl_lang_parser.php,v 1.2.6.3 2010/12/12 10:34:14 mx-julian Exp $
  * @link 		http://www.teamst.org/index.php
  * 
  * @internal Revisions:
@@ -54,9 +54,7 @@ else
 $out = ''; // data for output file
 $var_counter = 0;
 $var_counter_new = 0;
-
-
-
+$new_vars = array();
 
 echo "===== Start TestLink lang_parser =====\n";
 
@@ -91,11 +89,13 @@ echo "File to update lines = ".($lines_old_count+1)."\n";
 // find end of english header:
 for( $i = 0; $i < $lines_eng_count; $i++ )
 {
-    if (preg_match('/\$Id.+(\d+\.\d+)\s.*/', $lines_eng[$i], $eng_revision) )
+	// parse revision of master file
+    if (preg_match('/\$Id.+v\s(\S+)\s.*/', $lines_eng[$i], $eng_revision) )
     {
         $revision_comment = $eng_revision[1];
         echo "Master file revision: ".$revision_comment."\n";
     }
+    // search for "*/" at the end of a line
     if (preg_match("/\*\//", $lines_eng[$i]) )
     {
         echo "Master file: End of header is line = ".($i+1)."\n";
@@ -139,7 +139,7 @@ for( $i = $begin_line; $i < $lines_eng_count; $i++ )
     elseif (preg_match('/^([\s\t]*)$/', $lines_eng[$i]))
     {
         echo "\n\n=line ".($i+1)."=\nCopy empty line to file to be updated\n";
-        $out .= "\n";
+        $out .= "\r\n";
     }
 
 	// parse a line with variable definition
@@ -190,6 +190,7 @@ for( $i = $begin_line; $i < $lines_eng_count; $i++ )
 		    //$out .= trim($lines_eng[$i]). " //TODO: localize\r\n";
 			$out .= $lines_eng[$i];
 		    $var_counter_new++;
+		    $new_vars[$i] = $var_name;
 
         	// check multiline value (check semicolon or semicolon with comment)
 			while (!(preg_match('/^(.*);[\s]*$/', $lines_eng[$i])
@@ -238,6 +239,7 @@ fclose($fp);
 
 echo "\n\nUpdated file: ".$file_lang_old;
 echo "\nCompleted! The script has parsed $var_counter strings and add $var_counter_new new variables.\n";
-echo "===== Bye =====\n";
+echo implode("\n", $new_vars);
+echo "\n\n===== Bye =====\n";
 
 ?>
