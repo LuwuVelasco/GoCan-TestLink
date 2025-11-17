@@ -1,10 +1,43 @@
-FROM pensiero/apache-php-mysql:latest
+FROM php:7.4-apache
 
-RUN apt update -q && apt install -yqq --force-yes \
-    mysql-server
+# Extensiones que TestLink necesita (y Postgres)
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    libxml2-dev \
+    libzip-dev \
+    libpng-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
+ && docker-php-ext-configure gd --with-jpeg --with-freetype \
+ && docker-php-ext-install -j$(nproc) \
+    pdo \
+    pdo_pgsql \
+    pgsql \
+    gd \
+    xml \
+    zip \
+    mbstring \
+    session \
+ && a2enmod rewrite \
+ && rm -rf /var/lib/apt/lists/*
 
-# Start mysql
-RUN /etc/init.d/mysql 'start'
+# Directorio donde Apache sirve los archivos
+WORKDIR /var/www/html
 
-WORKDIR /var/www/public
-COPY . ./
+# Copiar todo el código de TestLink al DocumentRoot
+COPY . /var/www/html
+
+# Directorios de logs y adjuntos que usa tu config.inc.php
+RUN mkdir -p /var/testlink/logs /var/testlink/upload_area \
+ && chown -R www-data:www-data /var/www/html /var/testlink \
+ && chmod -R 755 /var/testlink
+
+# Mostrar errores mientras estamos configurando (luego lo puedes comentar)
+RUN { \
+      echo "display_errors=On"; \
+      echo "display_startup_errors=On"; \
+      echo "error_reporting=E_ALL"; \
+    } > /usr/local/etc/php/conf.d/testlink-dev.ini
+
+EXPOSE 80
+CMD ["apache2-foreground"]

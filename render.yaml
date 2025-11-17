@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: testlink-gocan
+    runtime: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DB_HOST
+        fromDatabase:
+          name: testlink-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: testlink-db
+          property: port
+      - key: DB_USER
+        fromDatabase:
+          name: testlink-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: testlink-db
+          property: password
+      - key: DB_NAME
+        fromDatabase:
+          name: testlink-db
+          property: database
+
+databases:
+  - name: testlink-db
+    plan: free
+    region: oregon
+    databaseName: testlink
+    user: testlink_user
