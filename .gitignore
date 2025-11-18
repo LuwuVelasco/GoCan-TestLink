@@ -1,6 +1,5 @@
 .idea/*
 !.idea/tlcode.iml
 logs/
-/custom_config.inc.php
 **/._*
 upload_area/**
