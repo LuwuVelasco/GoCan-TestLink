@@ -276,6 +276,7 @@
 // $tlCfg->req_spec_template->scope->type = 'file';
 // $tlCfg->req_spec_template->scope->value = 'c:\usr\local\xampp-1.7.2\xampp\htdocs\head-20090909\item_templates\req_spec.txt';
 
+$tlCfg->config_check_warning_mode = 'SILENT';
 // Silenciar cualquier salida de debug de ADODB (que hace echo en HTML)
 $ADODB_OUTP = function($msg, $newline = true) {
     // No imprimir nada
